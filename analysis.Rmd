@@ -44,7 +44,8 @@ raw = tibble(filename = list.files("ignore/data_raw", pattern = ".txt", full.nam
   left_join(demos %>%
               select(subj_num, condition, ppm_on, ppm_off) %>%
               pivot_longer(names_to = "on_smoking", values_to = "ppm", cols = starts_with("ppm")) %>% 
-              mutate(on_smoking = recode(on_smoking, ppm_on = 1L, ppm_off = 0L)),
+              mutate(on_smoking = recode(on_smoking, ppm_on = 1L, ppm_off = 0L),
+                     ppm_z = c(scale(ppm))),
             by = "subj_num") %>%
   # Scrub all subjects who don't appear in demographics data
   filter(!is.na(condition)) %>%
@@ -89,28 +90,92 @@ summary(model)
 ```
 
 ```{r, eval = FALSE}
-model_onoff_rstanarm <- rstanarm::stan_glmer(resp ~ corResp * probe * on_smoking + (1 + corResp | subj_num),
-                                       family = binomial(link = "logit"),
-                                       data = raw %>% filter(valid == 1, exptCond == 1),
-                                       prior = rstanarm::cauchy(0, 5),
-                                       prior_intercept = rstanarm::cauchy(0, 5))
+models <- tibble(name = c("onoff", "ppm", "control", "relational"),
+                 has_exptCond = list(0:1, 1L, 0L, 1L),
+                 has_smoking = c("on_smoking", "ppm_z", "on_smoking", "on_smoking")) %>%
+  mutate(data = map(has_exptCond, ~raw %>%
+                      filter(valid == 1, exptCond %in% .x)),
+         terms = map_if(has_exptCond, lengths(has_exptCond) > 1,
+                        ~c("corResp", "probe", "exptCond"),
+                        .else = ~c("corResp", "probe")),
+         terms = map2(terms, has_smoking, ~c(.x, .y)),
+         txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
+         txt_formula = paste0("resp ~ (", txt_formula, ")^3 + (1 + corResp | subj_num)"),
+         model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
+                                                               family = binomial(link = "logit"),
+                                                               data = .y,
+                                                               prior = rstanarm::cauchy(0, 5),
+                                                               prior_intercept = rstanarm::cauchy(0, 5))))
 
-model_ppm_rstanarm <- rstanarm::stan_glmer(resp ~ corResp * probe * scale(ppm) + (1 + corResp | subj_num),
-                                       family = binomial(link = "logit"),
-                                       data = raw %>% filter(valid == 1, exptCond == 1),
-                                       prior = rstanarm::cauchy(0, 5),
-                                       prior_intercept = rstanarm::cauchy(0, 5))
+save(models, file = "ignore/data_R/models_rstanarm.rda")
 ```
 
 ```{r}
-load("ignore/model_rstanarm.rda")
+load("ignore/data_R/models_rstanarm.rda")
 ```
 
 ```{r}
-model_rstanarm %>%
-  as.data.frame() %>%
-  as_tibble() %>%
-  ggplot(aes(x = corResp)) +
-  geom_histogram()
+preplots <- models %>%
+  select(name, model) %>%
+  mutate(model = map(model, ~.x %>%
+                       as.data.frame() %>%
+                       as_tibble() %>%
+                       mutate(iteration = 1:nrow(.)) %>%
+                       select(-contains("["), -contains("sigma")) %>%
+                       rename(intercept = "(Intercept)") %>%
+                       pivot_longer(cols = -iteration, names_to = "term", values_to = "estimate")))
 ```
 
+```{r}
+preplots$model[[1]] %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram() +
+  geom_vline(xintercept = 0, linetype = 3) +
+  facet_wrap(~ term, scales = "free_x")
+```
+
+
+```{r}
+preplots_fixef <- models %>%
+  select(name, terms, data, model) %>%
+  mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
+         predicted = map2(model, data, ~.x %>%
+                            rstanarm::posterior_linpred(transform = TRUE,
+                                                        newdata = .y,
+                                                        re.form = NA,
+                                                        draws = 1000)),
+         # Must expand AFTER predictions is already done to repeat for iterations
+         data = map(data, ~.x %>%
+                      mutate(obs = 1:nrow(.),
+                             iteration = map(obs, ~1:1000)) %>%
+                      unchop(iteration)),
+         predicted = map(predicted, ~.x %>%
+                           as_tibble() %>%
+                           mutate(iteration = 1:nrow(.)) %>%
+                           pivot_longer(cols = -iteration, names_to = "obs", values_to = "resp_pred") %>%
+                           mutate(obs = as.integer(obs))),
+         predicted = map2(data, predicted, ~left_join(.x, .y, by = c("obs", "iteration")))) %>%
+  select(name, predicted)
+```
+
+```{r}
+preplots_fixef$predicted[[1]] %>%
+  select(-obs) %>%
+  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
+  pivot_wider(names_from = corResp, values_from = resp_pred, names_prefix = "rate_") %>%
+  mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)) %>%
+  ggplot(aes(x = probe, y = dprime, color = factor(exptCond))) +
+  geom_jitter(alpha = 0.3) +
+  facet_grid(~ on_smoking)
+```
+
+```{r}
+preplots_fixef$predicted[[1]] %>%
+  select(-obs) %>%
+  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
+  pivot_wider(names_from = corResp, values_from = resp_pred, names_prefix = "rate_") %>%
+  mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)) %>%
+  ggplot(aes(x = probe, y = dprime, color = factor(exptCond))) +
+  geom_jitter(alpha = 0.3) +
+  facet_grid(~ on_smoking)
+```
