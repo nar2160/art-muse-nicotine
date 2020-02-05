@@ -75,19 +75,9 @@ raw %>%
   geom_point()
 ```
 
+## model fittin
 
-
-## results baby
-
-```{r}
-model <- lme4::glmer(resp ~ corResp * probe * on_smoking + (1 + corResp | subj_num),
-                     data = raw %>% filter(valid == 1),
-                     family = binomial(link = "logit"))
-```
-
-```{r}
-summary(model)
-```
+As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
 
 ```{r, eval = FALSE}
 models <- tibble(name = c("onoff", "ppm", "control", "relational"),
@@ -114,26 +104,39 @@ save(models, file = "ignore/data_R/models_rstanarm.rda")
 load("ignore/data_R/models_rstanarm.rda")
 ```
 
+## results preppin
+
 ```{r}
-preplots <- models %>%
-  select(name, model) %>%
-  mutate(model = map(model, ~.x %>%
-                       as.data.frame() %>%
-                       as_tibble() %>%
-                       mutate(iteration = 1:nrow(.)) %>%
-                       select(-contains("["), -contains("sigma")) %>%
-                       rename(intercept = "(Intercept)") %>%
-                       pivot_longer(cols = -iteration, names_to = "term", values_to = "estimate")))
+preplots_params <- models %>%
+  select(name, iterations = model) %>%
+  mutate(iterations = map(iterations, ~.x %>%
+                            as.data.frame() %>%
+                            as_tibble() %>%
+                            mutate(iteration = 1:nrow(.)) %>%
+                            select(-contains("["), -contains("sigma")) %>%
+                            rename(intercept = "(Intercept)") %>%
+                            pivot_longer(cols = -iteration, names_to = "term", values_to = "estimate")))
 ```
 
 ```{r}
-preplots$model[[1]] %>%
-  ggplot(aes(x = estimate)) +
-  geom_histogram() +
-  geom_vline(xintercept = 0, linetype = 3) +
-  facet_wrap(~ term, scales = "free_x")
+preplots_bysubj <- models %>%
+  select(name, terms, data, model) %>%
+  mutate(data = map2(data, terms, ~.x %>% select("subj_num", .y) %>% distinct()),
+         predicted = map2(model, data, ~.x %>%
+                            rstanarm::posterior_linpred(transform = TRUE,
+                                                        newdata = .y,
+                                                        re.form = NULL,
+                                                        draws = 1000)),
+         predicted = map(predicted, ~apply(.x, 2, median) %>% t() %>% c()),
+         predicted = map2(data, predicted, ~.x %>%
+                            mutate(resp_pred = .y,
+                                   corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
+                            pivot_wider(names_from = corResp,
+                                        values_from = resp_pred,
+                                        names_prefix = "rate_") %>%
+                            mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)))) %>%
+  select(name, predicted)
 ```
-
 
 ```{r}
 preplots_fixef <- models %>%
@@ -154,18 +157,108 @@ preplots_fixef <- models %>%
                            mutate(iteration = 1:nrow(.)) %>%
                            pivot_longer(cols = -iteration, names_to = "obs", values_to = "resp_pred") %>%
                            mutate(obs = as.integer(obs))),
-         predicted = map2(data, predicted, ~left_join(.x, .y, by = c("obs", "iteration")))) %>%
+         predicted = map2(data, predicted, ~left_join(.x, .y, by = c("obs", "iteration"))),
+         predicted = map(predicted, ~.x %>%
+                           select(-obs) %>%
+                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
+                           pivot_wider(names_from = corResp,
+                                       values_from = resp_pred,
+                                       names_prefix = "rate_") %>%
+                           mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)))) %>%
   select(name, predicted)
 ```
 
+## results graphin
+
+### parameter estimates
+
+Just parameter estimates from model 1, where both control and relational trials are included and `exptCond` is used as a predictor to look at interactions of d' and allllll conditions.
+
+```{r}
+preplots_params$iterations[[1]] %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram() +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_vline(aes(xintercept = estimate),
+             data = preplots_params$iterations[[1]] %>%
+               group_by(term) %>%
+               summarize(estimate = median(estimate)),
+             color = "hotpink",
+             linetype = 3) +
+  facet_wrap(~ term, scales = "free")
+```
+
+Comparing the relational only binary smoking model and relational only ppm model. The ppm model basically appears to be a drastically less stable version of the binary smoking model.
+
+```{r}
+preplots_params %>%
+  filter(name %in% c("ppm", "relational")) %>%
+  unnest(iterations) %>%
+  mutate(term = if_else(name == "ppm",
+                        str_replace(term, "ppm_z", "smoking"),
+                        str_replace(term, "on_smoking", "smoking"))) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram(aes(fill = name), position = "identity", alpha = 0.4) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_vline(aes(xintercept = estimate, color = name),
+             data = preplots_params %>%
+               filter(name %in% c("ppm", "relational")) %>%
+               unnest(iterations) %>%
+               mutate(term = if_else(name == "ppm",
+                                     str_replace(term, "ppm_z", "smoking"),
+                                     str_replace(term, "on_smoking", "smoking"))) %>%
+               group_by(name, term) %>%
+               summarize(estimate = median(estimate)),
+             linetype = 3) +
+  facet_wrap(~ term, scales = "free")
+```
+
+### Plotting predicted d' and stuff
+
+#### by subject
+
+```{r}
+preplots_bysubj$predicted[[1]] %>%
+  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  ggplot(aes(x = on_smoking, y = dprime, color = probe)) +
+  geom_line(aes(group = interaction(subj_num, probe))) +
+  geom_point() +
+  facet_grid(probe ~ exptCond)
+```
+
+```{r}
+preplots_bysubj$predicted[[1]] %>%
+  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  ggplot(aes(x = on_smoking, y = rate_hit, color = probe)) +
+  geom_line(aes(group = interaction(subj_num, probe))) +
+  geom_point() +
+  facet_grid(~exptCond)
+```
+
+```{r}
+preplots_bysubj %>%
+  filter(name != "ppm") %>%
+  unnest(predicted) %>%
+  mutate(exptCond = case_when(name == "control" ~ 0L,
+                              name == "relational" ~ 1L,
+                              TRUE ~ exptCond),
+         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  ggplot(aes(x = interaction(probe, on_smoking, exptCond), y = dprime, color = name)) +
+  geom_line(aes(group = name)) +
+  geom_point() +
+  facet_wrap(~subj_num) +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+```
+
+#### fixed effects over everyone
+
 ```{r}
 preplots_fixef$predicted[[1]] %>%
-  select(-obs) %>%
-  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
-  pivot_wider(names_from = corResp, values_from = resp_pred, names_prefix = "rate_") %>%
-  mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)) %>%
-  ggplot(aes(x = probe, y = dprime, color = factor(exptCond))) +
-  geom_jitter(alpha = 0.3) +
+  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational"),
+         on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
+  ggplot(aes(x = probe, y = dprime, color = exptCond, fill = exptCond)) +
+  geom_jitter(alpha = 0.1) +
+  geom_violin(position = "identity", alpha = 0.5) +
   facet_grid(~ on_smoking)
 ```
 
