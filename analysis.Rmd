@@ -299,7 +299,8 @@ preplots_fixef <- models %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
-                           mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)))) %>%
+                           mutate(aprime = sdt_aprime(rate_hit, rate_fa),
+                                  dprime = sdt_dprime(rate_hit, rate_fa)))) %>%
   select(name, predicted)
 ```
 
