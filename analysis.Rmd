@@ -204,13 +204,13 @@ sdt_metrics %>%
   ungroup() %>%
   select(subj_num:cue, aprime) %>%
   ggplot(aes(x = on_smoking, y = aprime)) +
-  geom_line(aes(group = subj_num), alpha = 0.5) +
+  geom_line(aes(group = subj_num), alpha = 0.3) +
   geom_line(aes(group = 1),
             data = sdt_metrics %>%
               ungroup() %>%
               select(subj_num:cue, aprime) %>%
               group_by(on_smoking, cue, exptCond) %>%
-              summarize(aprime = median(aprime)),
+              summarize(aprime = mean(aprime)),
             size = 1) +
   geom_point() +
   geom_hline(yintercept = 0, linetype = 3) +
@@ -218,19 +218,21 @@ sdt_metrics %>%
 
 sdt_metrics %>%
   ungroup() %>%
-  select(subj_num:cue, rate_fa) %>%
-  ggplot(aes(x = on_smoking, y = rate_fa)) +
-  geom_line(aes(group = subj_num), alpha = 0.5) +
+  select(subj_num:cue, rate_hit, rate_fa) %>%
+  pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+  ggplot(aes(x = on_smoking, y = rate)) +
+  geom_line(aes(group = subj_num), alpha = 0.3) +
   geom_line(aes(group = 1),
             data = sdt_metrics %>%
               ungroup() %>%
-              select(subj_num:cue, rate_fa) %>%
-              group_by(on_smoking, cue, exptCond) %>%
-              summarize(rate_fa = median(rate_fa)),
+              select(subj_num:cue, rate_hit, rate_fa) %>%
+              pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+              group_by(on_smoking, cue, exptCond, rate_type) %>%
+              summarize(rate = mean(rate)),
             size = 1) +
   geom_point() +
   geom_hline(yintercept = 0, linetype = 3) +
-  facet_grid(~ exptCond + cue)
+  facet_grid(rate_type ~ exptCond + cue)
 ```
 
 
@@ -382,6 +384,27 @@ preplots_bysubj %>%
   facet_wrap(~subj_num) +
   theme(axis.text.x = element_text(hjust = 1, angle = 45))
 ```
+
+```{r}
+sdt_metrics %>%
+  ungroup() %>%
+  select(subj_num:cue, rate_hit, rate_fa) %>%
+  pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+  ggplot(aes(x = on_smoking, y = rate)) +
+  geom_line(aes(group = subj_num), alpha = 0.3) +
+  geom_line(aes(group = 1),
+            data = sdt_metrics %>%
+              ungroup() %>%
+              select(subj_num:cue, rate_hit, rate_fa) %>%
+              pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+              group_by(on_smoking, cue, exptCond, rate_type) %>%
+              summarize(rate = mean(rate)),
+            size = 1) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = 3) +
+  facet_grid(rate_type ~ exptCond + cue)
+```
+
 
 #### fixed effects over everyone
 
