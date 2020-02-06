@@ -202,6 +202,22 @@ Attempting to recreate the original "significant" statistic from Nick's descript
 ```{r}
 sdt_metrics %>%
   ungroup() %>%
+  select(subj_num:cue, aprime) %>%
+  ggplot(aes(x = on_smoking, y = aprime)) +
+  geom_line(aes(group = subj_num), alpha = 0.5) +
+  geom_line(aes(group = 1),
+            data = sdt_metrics %>%
+              ungroup() %>%
+              select(subj_num:cue, aprime) %>%
+              group_by(on_smoking, cue, exptCond) %>%
+              summarize(aprime = median(aprime)),
+            size = 1) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = 3) +
+  facet_grid(~ exptCond + cue)
+
+sdt_metrics %>%
+  ungroup() %>%
   select(subj_num:cue, rate_fa) %>%
   ggplot(aes(x = on_smoking, y = rate_fa)) +
   geom_line(aes(group = subj_num), alpha = 0.5) +
