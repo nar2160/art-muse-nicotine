@@ -151,17 +151,45 @@ raw %>%
 
 Pretty sure most of these hinge on manually calculating A'/d' and such.
 
+### Manually calculating SDT metrics: Craazy right?
+
 ```{r}
 sdt_metrics <- raw %>%
   filter(valid == 1) %>%
   mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
-         on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
+         on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
+         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
   group_by(subj_num, on_smoking, exptCond, cue, corResp) %>%
   summarize(rate = mean(resp), snod = snodgrass_vec(resp), n_trials = n()) %>%
   pivot_wider(names_from = corResp, values_from = c(rate, snod)) %>%
   mutate(aprime = sdt_aprime(rate_hit, rate_fa),
-         dprime = sdt_dprime(snod_hit, snod_fa))
+         aprime_snod = sdt_aprime(snod_hit, snod_fa),
+         dprime = sdt_dprime(snod_hit, snod_fa),
+         pr = sdt_pr(rate_hit, rate_fa))
+```
 
+```{r}
+sdt_metrics %>%
+  ggplot(aes(x = aprime, y = aprime_snod)) +
+  geom_abline(slope = 1, intercept = 0, linetype = 3) +
+  geom_point(alpha = 0.5)
+```
+
+```{r}
+sdt_metrics %>%
+  ggplot(aes(x = aprime, y = dprime)) +
+  geom_point(alpha = 0.5)
+```
+
+```{r}
+sdt_metrics %>%
+  ggplot(aes(x = aprime_snod, y = dprime)) +
+  geom_point(alpha = 0.5)
+```
+
+Doing the `qnorm()` transform as d' does introduces nonlinearity into the SDT metrics, predictably. But they are still basically Spearman rho >= 0.97.
+
+```{r}
 sdt_metrics %>%
   ggplot(aes(x = exptCond, y = aprime, color = cue)) +
   geom_line(aes(group =interaction(subj_num, cue)), alpha = 0.5) +
@@ -174,25 +202,19 @@ Attempting to recreate the original "significant" statistic from Nick's descript
 ```{r}
 sdt_metrics %>%
   ungroup() %>%
-  select(-starts_with("rate")) %>%
-  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  pivot_wider(names_from = exptCond, values_from = aprime, names_prefix = "aprime_") %>%
-  mutate(aprime_diff_rel = aprime_relational - aprime_control) %>%
-  ggplot(aes(x = on_smoking, y = aprime_diff_rel, color = cue)) +
-  geom_line(aes(group = interaction(subj_num, cue)), alpha = 0.5) +
-  geom_line(aes(group = cue),
+  select(subj_num:cue, rate_fa) %>%
+  ggplot(aes(x = on_smoking, y = rate_fa)) +
+  geom_line(aes(group = subj_num), alpha = 0.5) +
+  geom_line(aes(group = 1),
             data = sdt_metrics %>%
               ungroup() %>%
-              select(-starts_with("rate")) %>%
-              mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-              pivot_wider(names_from = exptCond, values_from = aprime, names_prefix = "aprime_") %>%
-              mutate(aprime_diff_rel = aprime_relational - aprime_control) %>%
-              group_by(on_smoking, cue) %>%
-              summarize(aprime_diff_rel = median(aprime_diff_rel)),
+              select(subj_num:cue, rate_fa) %>%
+              group_by(on_smoking, cue, exptCond) %>%
+              summarize(rate_fa = median(rate_fa)),
             size = 1) +
   geom_point() +
   geom_hline(yintercept = 0, linetype = 3) +
-  facet_grid(~ cue)
+  facet_grid(~ exptCond + cue)
 ```
 
 
