@@ -13,7 +13,7 @@ require(rlang)
 options(mc.cores = parallel::detectCores())
 
 snodgrass <- function (num, denom) return((num+.5)/(denom+1))
-snodgrass_vec <- function (vec) return((sum(vec) + 0.5) / (length(x) + 1))
+snodgrass_vec <- function (vec) return((sum(vec) + 0.5) / (length(vec) + 1))
 sdt_pr <- function (hit, fa) return(hit - fa)
 sdt_br <- function(hit, fa) return(fa / (1 - (hit - fa)))
 sdt_aprime <- function (hit, fa) return(.5 + (sign(hit-fa)*((hit-fa)^2 + abs(hit-fa))/(4*pmax(hit,fa)-(4*hit*fa))))
