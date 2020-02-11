@@ -2,7 +2,10 @@
 title: "multilevel smokers art gallery analyses"
 author: "Monica Thieu"
 date: "1/22/2020"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -241,7 +244,7 @@ sdt_metrics %>%
 As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
 
 ```{r, eval = FALSE}
-models2 <- tibble(name = c("full", "full_random", "control", "relational"),
+models <- tibble(name = c("full", "full_random", "control", "relational"),
                  has_exptCond = list(0:1, 0:1, 0L, 1L)) %>%
   mutate(data = map(has_exptCond, ~raw %>%
                       filter(valid == 1, exptCond %in% .x)),
@@ -250,10 +253,10 @@ models2 <- tibble(name = c("full", "full_random", "control", "relational"),
                         ~c(.x, "exptCond"),
                         .else = ~.x),
          ranefs = if_else(name == "full_random",
-                          "(1 + (corResp + probe + exptCond + on_smoking)^2 - probe:exptCond - probe:on_smoking - exptCond:on_smoking | subj_num)",
+                          "(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
                           "(1 + corResp | subj_num)"),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
-         txt_formula = paste0("resp ~ (", txt_formula, ")^3 + (1 + corResp | subj_num)"),
+         txt_formula = paste0("resp ~ (", txt_formula, ")^3 + ", ranefs),
          model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
                                                                family = binomial(link = "logit"),
                                                                data = .y,
@@ -269,163 +272,254 @@ load("ignore/data_R/models_rstanarm.rda")
 
 ## results preppin
 
-```{r}
+```{r, eval = FALSE}
 preplots_params <- models %>%
   select(name, iterations = model) %>%
   mutate(iterations = map(iterations, ~posterior_preplot_params(.x)))
-```
 
-```{r}
 preplots_bysubj <- models %>%
   select(name, terms, data, model) %>%
   mutate(data = map2(data, terms, ~.x %>% select("subj_num", .y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_bysubj(.x, .y, pred_col = "resp_pred")),
          predicted = map(predicted, ~.x %>%
-                            mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
-                            pivot_wider(names_from = corResp,
-                                        values_from = resp_pred,
-                                        names_prefix = "rate_") %>%
-                            mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)))) %>%
-  select(name, predicted)
-```
-
-```{r}
-preplots_fixef <- models %>%
-  select(name, terms, data, model) %>%
-  mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
-         predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "resp_pred")),
-         predicted = map(predicted, ~.x %>%
-                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
+                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `0` = "control", `1` = "relational")) %>%
+                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
+                                  on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
                            mutate(aprime = sdt_aprime(rate_hit, rate_fa),
                                   dprime = sdt_dprime(rate_hit, rate_fa)))) %>%
   select(name, predicted)
+
+preplots_fixef <- models %>%
+  select(name, terms, data, model) %>%
+  mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
+         predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "resp_pred")),
+         predicted = map(predicted, ~.x %>%
+                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `0` = "control", `1` = "relational")) %>%
+                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
+                                  on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
+                           pivot_wider(names_from = corResp,
+                                       values_from = resp_pred,
+                                       names_prefix = "rate_") %>%
+                           mutate(aprime = sdt_aprime(rate_hit, rate_fa),
+                                  dprime = sdt_dprime(rate_hit, rate_fa)))) %>%
+  select(name, predicted)
+
+save(preplots_params, preplots_bysubj, preplots_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
 ```
+
+```{r}
+load("ignore/data_R/preplots_rstanarm.rda")
+```
+
+```{r}
+preplots_raw_bysubj <- bind_rows(model_sparse = preplots_bysubj$predicted[[1]],
+                           model_random = preplots_bysubj$predicted[[2]],
+                           raw = sdt_metrics %>%
+                             select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime, dprime),
+                           .id = "name")
+
+preplots_raw_fixef <- preplots_fixef$predicted[[2]] %>%
+  arrange(iteration, probe, exptCond, on_smoking) %>%
+  group_by(iteration, probe, exptCond) %>%
+  summarize(diff_rate_fa = diff(rate_fa),
+            diff_rate_hit = diff(rate_hit),
+            diff_aprime = diff(aprime)) %>%
+  pivot_longer(starts_with("diff"), names_to = "metric_type", values_to = "diff_smoking", names_prefix = "diff_") %>%
+  nest(diffs = -c(probe, exptCond, metric_type)) %>%
+  mutate(diff_smoking_q025 = map_dbl(diffs, ~quantile(.x$diff_smoking, .025)),
+         diff_smoking_q50 = map_dbl(diffs, ~median(.x$diff_smoking)),
+         diff_smoking_q975 = map_dbl(diffs, ~quantile(.x$diff_smoking, .975))) %>%
+  left_join(sdt_metrics %>%
+              rename(probe = cue) %>%
+              arrange(subj_num, probe, exptCond, on_smoking) %>%
+              group_by(subj_num, probe, exptCond) %>%
+              summarize(diff_rate_fa = diff(rate_fa),
+                        diff_rate_hit = diff(rate_hit),
+                        diff_aprime = diff(aprime)) %>%
+              ungroup() %>%
+              pivot_longer(starts_with("diff"), names_to = "metric_type", values_to = "diff_smoking", names_prefix = "diff_") %>%
+              group_by(probe, exptCond, metric_type) %>%
+              summarize(raw_median_diff_smoking = median(diff_smoking),
+                        raw_mean_diff_smoking = mean(diff_smoking)),
+            by = c("probe", "exptCond", "metric_type"))
+```
+
 
 ## results graphin
 
 ### parameter estimates
 
-Just parameter estimates from model 1, where both control and relational trials are included and `exptCond` is used as a predictor to look at interactions of d' and allllll conditions.
-
-```{r}
-preplots_params$iterations[[1]] %>%
-  ggplot(aes(x = estimate)) +
-  geom_histogram() +
-  geom_vline(xintercept = 0, linetype = 3) +
-  geom_vline(aes(xintercept = estimate),
-             data = preplots_params$iterations[[1]] %>%
-               group_by(term) %>%
-               summarize(estimate = median(estimate)),
-             color = "hotpink",
-             linetype = 3) +
-  facet_wrap(~ term, scales = "free")
-```
-
-Comparing the relational only binary smoking model and relational only ppm model. The ppm model basically appears to be a drastically less stable version of the binary smoking model.
+Parameter estimates from model 1 and model 2, where both control and relational trials are included and `exptCond` is used as a predictor to look at interactions of d' and all conditions. Model 1 fixes all interaction effects, and only has a random effect of intercept and `corResp` (overall d'), while model 2 allows all second-order interactions to vary by subject as well.
 
 ```{r}
 preplots_params %>%
-  filter(name %in% c("ppm", "relational")) %>%
+  filter(startsWith(name, "full")) %>%
   unnest(iterations) %>%
-  mutate(term = if_else(name == "ppm",
-                        str_replace(term, "ppm_z", "smoking"),
-                        str_replace(term, "on_smoking", "smoking"))) %>%
   ggplot(aes(x = estimate)) +
   geom_histogram(aes(fill = name), position = "identity", alpha = 0.4) +
   geom_vline(xintercept = 0, linetype = 3) +
   geom_vline(aes(xintercept = estimate, color = name),
              data = preplots_params %>%
-               filter(name %in% c("ppm", "relational")) %>%
+               filter(startsWith(name, "full")) %>%
                unnest(iterations) %>%
-               mutate(term = if_else(name == "ppm",
-                                     str_replace(term, "ppm_z", "smoking"),
-                                     str_replace(term, "on_smoking", "smoking"))) %>%
                group_by(name, term) %>%
                summarize(estimate = median(estimate)),
              linetype = 3) +
   facet_wrap(~ term, scales = "free")
 ```
 
+Based on at least the parameter estimates of the fixed effects, it looks like the model with the random effects isn't drastically different in median estimates of most of the fixed effects. Sure the standard errors are bigger, but I think I'm ok with this. As you'll see below, allowing more random effects reduces the effective regularization of single subject d', leaving more variability in place. I think we want this!
+
 ### Plotting predicted d' and stuff
 
-#### by subject
+#### Explicitly comparing the raw to the models
+
+Plotting the condition-wise A' estimated from subjects' raw hit and FA rates as well as their model-estimated hit and FA rates. Here you can see much more clearly that both models (few random effects and all second-order random effects) serve to regularize condition-wise A' values that differ very much from that subject's other condition-wise A' values. The sparser model is regularizing much more heavily than the fuller model with second-order random effects.
 
 ```{r}
-preplots_bysubj$predicted[[1]] %>%
-  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  ggplot(aes(x = on_smoking, y = dprime, color = probe)) +
-  geom_line(aes(group = interaction(subj_num, probe))) +
-  geom_point() +
-  facet_grid(probe ~ exptCond)
-```
-
-```{r}
-preplots_bysubj$predicted[[1]] %>%
-  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  ggplot(aes(x = on_smoking, y = rate_hit, color = probe)) +
-  geom_line(aes(group = interaction(subj_num, probe))) +
-  geom_point() +
-  facet_grid(~exptCond)
-```
-
-```{r}
-preplots_bysubj %>%
-  filter(name != "ppm") %>%
-  unnest(predicted) %>%
-  mutate(exptCond = case_when(name == "control" ~ 0L,
-                              name == "relational" ~ 1L,
-                              TRUE ~ exptCond),
-         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  ggplot(aes(x = interaction(probe, on_smoking, exptCond), y = dprime, color = name)) +
+preplots_raw_bysubj %>%
+  ggplot(aes(x = interaction(on_smoking, probe, exptCond), y = aprime, color = name)) +
   geom_line(aes(group = name)) +
-  geom_point() +
+  geom_point(size = 0.5) +
+  labs(x = "every sub-condition",
+       y = "A'",
+       title = "Raw and model-estimated A' by condition by subject",
+       subtitle = "The models regularize, adding random effects regularizes less") +
   facet_wrap(~subj_num) +
   theme(axis.text.x = element_text(hjust = 1, angle = 45))
 ```
 
+In general, I'm not too worried about discrepancies between the model-fit data and the raw data, because this shows that the random-effects model is doing a pretty good job of retaining condition-level performance that's lower, but regularizing it up a bit higher.
+
+#### Reproducing Nick's plots (ish), with model on top
+
+You'll go on to see that the predicted effects map well on to raw-derived _mean_ values for A', hit rate, and false alarm rate. When the plots are rendered with raw-derived _median_ values, the between-condition slopes are a little steeper, but maybe not in an interesting way.
+
 ```{r}
-sdt_metrics %>%
-  ungroup() %>%
-  select(subj_num:cue, rate_hit, rate_fa) %>%
-  pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
-  ggplot(aes(x = on_smoking, y = rate)) +
-  geom_line(aes(group = subj_num), alpha = 0.3) +
-  geom_line(aes(group = 1),
-            data = sdt_metrics %>%
-              ungroup() %>%
-              select(subj_num:cue, rate_hit, rate_fa) %>%
-              pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
-              group_by(on_smoking, cue, exptCond, rate_type) %>%
-              summarize(rate = mean(rate)),
-            size = 1) +
-  geom_point() +
-  geom_hline(yintercept = 0, linetype = 3) +
-  facet_grid(rate_type ~ exptCond + cue)
+preplots_raw_bysubj %>%
+  filter(name != "model_sparse") %>%
+  mutate(on_smoking = fct_rev(on_smoking)) %>%
+  ggplot(aes(x = on_smoking, y = aprime, color = name)) +
+  geom_line(aes(group = interaction(subj_num, name)), alpha = 0.15) +
+  geom_jitter(width = 0.1, alpha = 0.4) +
+  geom_line(aes(group = name),
+            data = preplots_raw_bysubj %>%
+              filter(name != "model_sparse") %>%
+              mutate(on_smoking = fct_rev(on_smoking)) %>%
+              group_by(name, on_smoking, exptCond, probe) %>%
+              summarize(aprime = mean(aprime)),
+            size = 2) +
+  geom_hline(yintercept = 0.5, linetype = 3) +
+  labs(title = "cholinergic modulation of A' by all the conditions") +
+  facet_grid( ~ exptCond + probe)
 ```
 
+```{r}
+preplots_raw_bysubj %>%
+  filter(name != "model_sparse") %>%
+  select(-aprime, -dprime) %>%
+  pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+  mutate(on_smoking = fct_rev(on_smoking),
+         rate_type = fct_rev(rate_type)) %>%
+  ggplot(aes(x = on_smoking, y = rate, color = name)) +
+  geom_line(aes(group = interaction(subj_num, name)), alpha = 0.1) +
+  geom_line(aes(group = name),
+            data = preplots_raw_bysubj %>%
+              filter(name != "model_sparse") %>%
+              select(-aprime, -dprime) %>%
+              pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
+              mutate(on_smoking = fct_rev(on_smoking),
+                     rate_type = fct_rev(rate_type)) %>%
+              group_by(name, on_smoking, probe, exptCond, rate_type) %>%
+              summarize(rate = mean(rate)),
+            size = 1) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  labs(title = "cholinergic modulation of hit/FA rate by all the conditions") +
+  facet_grid(rate_type ~ exptCond + probe)
+```
 
 #### fixed effects over everyone
 
+The most important thing to do here will be to generate posterior distributions of test statistics of interest, now that all the overall effect visualization can be done on the by-subject predictions.
+
+As far as I understand it, the key test statistics all depend on _the difference between the on-smoking and off-smoking conditions._
+
+Accordingly, the preplot object being used here has `diff_smoking` calculated over iterations as a default.
+
 ```{r}
-preplots_fixef$predicted[[1]] %>%
-  mutate(exptCond = recode(exptCond, `0` = "control", `1` = "relational"),
-         on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
-  ggplot(aes(x = probe, y = dprime, color = exptCond, fill = exptCond)) +
-  geom_jitter(alpha = 0.1) +
-  geom_violin(position = "identity", alpha = 0.5) +
-  facet_grid(~ on_smoking)
+preplots_raw_fixef %>%
+  unnest(diffs) %>%
+  ggplot(aes(x = diff_smoking, fill = probe)) +
+  geom_density(position = "identity", alpha = 0.5) +
+  geom_vline(aes(xintercept = raw_mean_diff_smoking, color = probe),
+             data = preplots_raw_fixef,
+             linetype = 2) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  facet_grid(metric_type ~ exptCond, scales = "free_x")
 ```
 
 ```{r}
-preplots_fixef$predicted[[1]] %>%
-  select(-obs) %>%
-  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit")) %>%
-  pivot_wider(names_from = corResp, values_from = resp_pred, names_prefix = "rate_") %>%
-  mutate(dprime = qnorm(rate_hit) - qnorm(rate_fa)) %>%
-  ggplot(aes(x = probe, y = dprime, color = factor(exptCond))) +
-  geom_jitter(alpha = 0.3) +
-  facet_grid(~ on_smoking)
+preplots_raw_fixef %>%
+  mutate(metric_type = recode(metric_type,
+                              aprime = "A'",
+                              rate_fa = "false alarm rate",
+                              rate_hit = "hit rate")) %>%
+  select(-starts_with("diff_")) %>%
+  unnest(diffs) %>%
+  ggplot(aes(x = exptCond, y = diff_smoking, fill = probe, color = probe)) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.2) +
+  geom_point(aes(y = raw_mean_diff_smoking),
+             data = preplots_raw_fixef %>%
+                 mutate(metric_type = recode(metric_type,
+                              aprime = "A'",
+                              rate_fa = "false alarm rate",
+                              rate_hit = "hit rate")),
+             size = 3) +
+  labs(x = "control or relational?",
+       y = "ON - OFF smoking difference",
+       title = "on-off smoking diffs by condition",
+       subtitle = "Big dots: across-subject MEANS from raw data") +
+  facet_grid(~ metric_type)
 ```
+
+### plotting test statistics
+
+Searching for the following difference from the descriptive-only statistics:
+
+relational trials: FA_on < FA_off for room, FA_on == FA_off for art
+
+control trials: no such differences?
+
+```{r}
+preplots_raw_fixef %>%
+  select(probe, exptCond, metric_type, diffs) %>%
+  unnest(diffs) %>%
+  arrange(metric_type, iteration, exptCond, probe) %>%
+  group_by(metric_type, iteration, exptCond) %>%
+  summarize(diff_smoking_probe = diff(diff_smoking)) %>%
+  ggplot(aes(x = diff_smoking_probe, fill = exptCond)) +
+  geom_density(position = "identity", alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  labs(title = "Is the on - off difference bigger in room than art condition?") +
+  facet_grid(~ metric_type, scales = "free_x")
+```
+
+```{r}
+preplots_raw_fixef %>%
+  select(probe, exptCond, metric_type, diffs) %>%
+  unnest(diffs) %>%
+  arrange(metric_type, iteration, probe, exptCond) %>%
+  group_by(metric_type, iteration, probe) %>%
+  summarize(diff_smoking_exptCond = diff(diff_smoking)) %>%
+  ggplot(aes(x = diff_smoking_exptCond, fill = probe)) +
+  geom_density(position = "identity", alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  facet_grid(~ metric_type, scales = "free_x")
+```
+
+## a simulation analysis?
+
