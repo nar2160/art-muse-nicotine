@@ -207,24 +207,27 @@ sdt_metrics %>%
   ungroup() %>%
   select(subj_num:cue, aprime) %>%
   ggplot(aes(x = on_smoking, y = aprime)) +
-  geom_line(aes(group = subj_num), alpha = 0.3) +
+  geom_line(aes(group = subj_num), alpha = 0.2) +
   geom_line(aes(group = 1),
             data = sdt_metrics %>%
               ungroup() %>%
               select(subj_num:cue, aprime) %>%
               group_by(on_smoking, cue, exptCond) %>%
-              summarize(aprime = mean(aprime)),
+              summarize(aprime = median(aprime)),
             size = 1) +
   geom_point() +
   geom_hline(yintercept = 0, linetype = 3) +
   facet_grid(~ exptCond + cue)
+```
 
+```{r}
 sdt_metrics %>%
   ungroup() %>%
+  mutate(on_smoking = fct_rev(on_smoking)) %>%
   select(subj_num:cue, rate_hit, rate_fa) %>%
   pivot_longer(starts_with("rate"), names_to = "rate_type", values_to = "rate") %>%
   ggplot(aes(x = on_smoking, y = rate)) +
-  geom_line(aes(group = subj_num), alpha = 0.3) +
+  geom_line(aes(group = subj_num), alpha = 0.2) +
   geom_line(aes(group = 1),
             data = sdt_metrics %>%
               ungroup() %>%
@@ -410,7 +413,7 @@ preplots_raw_bysubj %>%
               filter(name != "model_sparse") %>%
               mutate(on_smoking = fct_rev(on_smoking)) %>%
               group_by(name, on_smoking, exptCond, probe) %>%
-              summarize(aprime = mean(aprime)),
+              summarize(aprime = median(aprime)),
             size = 2) +
   geom_hline(yintercept = 0.5, linetype = 3) +
   labs(title = "cholinergic modulation of A' by all the conditions") +
@@ -472,7 +475,7 @@ preplots_raw_fixef %>%
   ggplot(aes(x = exptCond, y = diff_smoking, fill = probe, color = probe)) +
   geom_hline(yintercept = 0, linetype = 3) +
   geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.2) +
-  geom_point(aes(y = raw_mean_diff_smoking),
+  geom_point(aes(y = raw_median_diff_smoking),
              data = preplots_raw_fixef %>%
                  mutate(metric_type = recode(metric_type,
                               aprime = "A'",
@@ -488,6 +491,8 @@ preplots_raw_fixef %>%
 
 ### plotting test statistics
 
+02/14/2020: Plot the betas concerning `corResp` in A'/hit/FA rate space for all of the relevant interactions to characterize what they mean. Or something.
+
 Searching for the following difference from the descriptive-only statistics:
 
 relational trials: FA_on < FA_off for room, FA_on == FA_off for art
@@ -501,9 +506,9 @@ preplots_raw_fixef %>%
   arrange(metric_type, iteration, exptCond, probe) %>%
   group_by(metric_type, iteration, exptCond) %>%
   summarize(diff_smoking_probe = diff(diff_smoking)) %>%
-  ggplot(aes(x = diff_smoking_probe, fill = exptCond)) +
-  geom_density(position = "identity", alpha = 0.5) +
-  geom_vline(xintercept = 0, linetype = 3) +
+  ggplot(aes(x = 1, y = diff_smoking_probe, fill = exptCond)) +
+  geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = 3) +
   labs(title = "Is the on - off difference bigger in room than art condition?") +
   facet_grid(~ metric_type, scales = "free_x")
 ```
@@ -520,6 +525,11 @@ preplots_raw_fixef %>%
   geom_vline(xintercept = 0, linetype = 3) +
   facet_grid(~ metric_type, scales = "free_x")
 ```
+
+
+### Doing significance tests on model predicted data
+
+02/14/2020: Run Matlab-style `signtest()` on the on-off difference data to recreate Nick's original result
 
 ## a simulation analysis?
 
