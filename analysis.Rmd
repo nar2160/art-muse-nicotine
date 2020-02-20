@@ -493,6 +493,17 @@ preplots_raw_fixef %>%
 
 02/14/2020: Plot the betas concerning `corResp` in A'/hit/FA rate space for all of the relevant interactions to characterize what they mean. Or something.
 
+```{r}
+preplots_fixef$predicted[[2]] %>%
+  ggplot(aes(x = on_smoking, y = aprime, color = interaction(exptCond, probe))) +
+  geom_line(aes(group = interaction(iteration, exptCond, probe)), alpha = 0.01) +
+  geom_line(aes(group = interaction(exptCond, probe)),
+            data = preplots_fixef$predicted[[2]] %>%
+              group_by(on_smoking, probe, exptCond) %>%
+              summarize(aprime = median(aprime)))
+```
+
+
 Searching for the following difference from the descriptive-only statistics:
 
 relational trials: FA_on < FA_off for room, FA_on == FA_off for art
@@ -506,8 +517,13 @@ preplots_raw_fixef %>%
   arrange(metric_type, iteration, exptCond, probe) %>%
   group_by(metric_type, iteration, exptCond) %>%
   summarize(diff_smoking_probe = diff(diff_smoking)) %>%
-  ggplot(aes(x = 1, y = diff_smoking_probe, fill = exptCond)) +
-  geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.5) +
+  ungroup() %>%
+  nest(data = -iteration) %>%
+  sample_n(400) %>%
+  unnest(data) %>%
+  ggplot(aes(x = exptCond, y = diff_smoking_probe)) +
+  geom_line(aes(group = iteration), alpha = 0.05) +
+  # geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.5) +
   geom_hline(yintercept = 0, linetype = 3) +
   labs(title = "Is the on - off difference bigger in room than art condition?") +
   facet_grid(~ metric_type, scales = "free_x")
