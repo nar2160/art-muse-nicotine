@@ -241,10 +241,16 @@ sdt_metrics %>%
   facet_grid(rate_type ~ exptCond + cue)
 ```
 
+```{r}
+
+```
+
 
 ## model fittin
 
 As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
+
+02/21/2020: re-fit the full_random model with effect-coded everything for more directly interpretable betas. Also, fit a manipulation check model predicting valid > invalid, but with no interactions, just main effects of the other ones
 
 ```{r, eval = FALSE}
 models <- tibble(name = c("full", "full_random", "control", "relational"),
@@ -274,6 +280,8 @@ load("ignore/data_R/models_rstanarm.rda")
 ```
 
 ## results preppin
+
+02/21/2020: Calculate a measure of model fit. predicted - actual RMSEs on hit/FA rates? Do this by re-drawing trials matching the original trial counts of the task?
 
 ```{r, eval = FALSE}
 preplots_params <- models %>%
@@ -489,18 +497,56 @@ preplots_raw_fixef %>%
   facet_grid(~ metric_type)
 ```
 
+```{r}
+preplots_fixef$predicted[[2]] %>%
+  select(-dprime) %>%
+  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
+  arrange(metric_type, iteration, probe, exptCond, on_smoking) %>%
+  group_by(metric_type, iteration, exptCond, on_smoking) %>%
+  summarize(diff_probe = diff(value)) %>%
+  ggplot(aes(x = on_smoking, y = diff_probe, fill = exptCond, color = exptCond)) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.2) +
+  geom_point(data = sdt_metrics %>%
+               select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime) %>%
+               pivot_longer(c(rate_fa, rate_hit, aprime), names_to = "metric_type", values_to = "value") %>%
+               arrange(subj_num, metric_type, exptCond, on_smoking) %>%
+               group_by(subj_num, metric_type, exptCond, on_smoking) %>%
+               summarize(diff_probe = diff(value)) %>%
+               group_by(metric_type, exptCond, on_smoking) %>%
+               summarize(diff_probe = median(diff_probe)),
+             size = 3) +
+  labs(x = "on or off smoking?",
+       y = "ROOM - ART difference",
+       title = "room/art smoking diffs by condition",
+       subtitle = "Big dots: across-subject MEDIANS from raw data") +
+  facet_grid(~ metric_type)
+```
+
 ### plotting test statistics
 
 02/14/2020: Plot the betas concerning `corResp` in A'/hit/FA rate space for all of the relevant interactions to characterize what they mean. Or something.
 
+02/21/2020: focus in on interaction between on-off/art-room/ctrl-relational. Is the diff between on-off room relational - on-off art relational DIFFERENT than the diff between on-off room control - on-off art control. And is the former different from 0?
+
 ```{r}
+var = "aprime"
+sym_var = sym(var)
+
 preplots_fixef$predicted[[2]] %>%
-  ggplot(aes(x = on_smoking, y = aprime, color = interaction(exptCond, probe))) +
+  ggplot(aes(x = on_smoking, y = {{sym_var}}, color = interaction(exptCond, probe))) +
   geom_line(aes(group = interaction(iteration, exptCond, probe)), alpha = 0.01) +
   geom_line(aes(group = interaction(exptCond, probe)),
             data = preplots_fixef$predicted[[2]] %>%
               group_by(on_smoking, probe, exptCond) %>%
-              summarize(aprime = median(aprime)))
+              summarize(!!var := median({{sym_var}}))) +
+  geom_line(aes(group = interaction(exptCond, probe)),
+            data = sdt_metrics %>%
+              rename(probe = cue) %>%
+              group_by(on_smoking, exptCond, probe) %>%
+              summarize(!!var := median({{sym_var}})),
+            linetype = 3,
+            size = 1)
 ```
 
 
@@ -514,18 +560,12 @@ control trials: no such differences?
 preplots_raw_fixef %>%
   select(probe, exptCond, metric_type, diffs) %>%
   unnest(diffs) %>%
-  arrange(metric_type, iteration, exptCond, probe) %>%
+  arrange(metric_type, iteration, probe, exptCond) %>%
   group_by(metric_type, iteration, exptCond) %>%
   summarize(diff_smoking_probe = diff(diff_smoking)) %>%
-  ungroup() %>%
-  nest(data = -iteration) %>%
-  sample_n(400) %>%
-  unnest(data) %>%
-  ggplot(aes(x = exptCond, y = diff_smoking_probe)) +
-  geom_line(aes(group = iteration), alpha = 0.05) +
-  # geom_violin(position = "identity", draw_quantiles = c(0.025, 0.5, 0.975), alpha = 0.5) +
-  geom_hline(yintercept = 0, linetype = 3) +
-  labs(title = "Is the on - off difference bigger in room than art condition?") +
+  ggplot(aes(x = diff_smoking_probe, fill = exptCond)) +
+  geom_density(position = "identity", alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 3) +
   facet_grid(~ metric_type, scales = "free_x")
 ```
 
@@ -542,10 +582,51 @@ preplots_raw_fixef %>%
   facet_grid(~ metric_type, scales = "free_x")
 ```
 
-
 ### Doing significance tests on model predicted data
 
 02/14/2020: Run Matlab-style `signtest()` on the on-off difference data to recreate Nick's original result
+
+02/21/2020: finish the above point, but definitely do it on the iteration-level by-subject predicted A'/hit rate/FA rates
+
+```{r}
+x <- preplots_bysubj$predicted[[2]] %>%
+  select(subj_num:exptCond, aprime, rate_hit, rate_fa) %>%
+  bind_rows(model = .,
+            raw = sdt_metrics %>% select(subj_num, exptCond, probe = cue, on_smoking, aprime, rate_hit, rate_fa),
+            .id = "name") %>%
+  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(names_from = on_smoking, values_from = value, names_prefix = "value_") %>%
+  mutate(value_diff = value_on - value_off,
+         sign_value_diff = sign(value_diff),
+         sign_value_diff = na_if(sign_value_diff, 0)) %>%
+  nest(data = -c(name, metric_type, exptCond, probe)) %>%
+  mutate(signtest_x = map_int(data, ~sum(.x$sign_value_diff == 1 & !is.na(.x$sign_value_diff))),
+         signtest_n = map_int(data, ~sum(!is.na(.x$sign_value_diff))),
+         signtest = map2(signtest_x, signtest_n, ~binom.test(x = .x,
+                                                             n = .y,
+                                                             alternative = "two.sided")),
+         p_value = map_dbl(signtest, ~pluck(.x, "p.value"))) %>%
+  ggplot(aes(x = interaction(exptCond, probe), y = p_value, color = name)) +
+  geom_hline(yintercept = .05, linetype = 3) +
+  geom_point() +
+  facet_grid(~ metric_type) +
+  labs(title = "ON - OFF smoking binomial sign test p-values") +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+
+x
+```
+
+
+```{r}
+preplots_fixef$predicted[[2]] %>%
+  select(-dprime) %>%
+  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
+  arrange(metric_type, iteration, probe, exptCond, on_smoking) %>%
+  group_by(metric_type, iteration, exptCond, probe) %>%
+  summarize(diff_smoking = diff(value)) %>%
+  group_by(metric)
+```
+
 
 ## a simulation analysis?
 
