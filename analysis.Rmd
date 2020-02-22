@@ -37,25 +37,48 @@ posterior_preplot_params <- function (object) {
   return (out)
 }
 
-posterior_preplot_bysubj <- function (object, newdata, pred_col = "y_pred", draws = 1000) {
+posterior_preplot_bysubj <- function (object, newdata, pred_col = "y_pred", by_iter = FALSE, draws = 1000) {
   out <- object %>%
     rstanarm::posterior_linpred(transform = TRUE,
                                 newdata = newdata,
                                 re.form = NULL,
                                 draws = draws)
-
-  # Just the median of every predicted point for every subject
-  # Note that this doesn't select in a paired way for the "median iteration"
-  # returns a VECTOR which needs to get slapped onto newdata
-  out %<>%
-    apply(2, median) %>%
-    t() %>%
-    c()
+  if (by_iter) {
+    
+    newdata %<>%
+      # Must expand AFTER predictions is already done to repeat for iterations
+      # need the "obs" column to make damn sure that the correct predicted points get pasted on the correct x values
+      mutate(obs = 1:nrow(.),
+             iteration = map(obs, ~1:draws)) %>%
+      unchop(iteration)
+    
+    out %<>%
+      as_tibble() %>%
+      mutate(iteration = 1:nrow(.)) %>%
+      pivot_longer(cols = -iteration, names_to = "obs", values_to = pred_col) %>%
+      mutate(obs = as.integer(obs)) %>%
+      right_join(newdata, by = c("obs", "iteration")) %>%
+      # the obs column obstructs any later pivoting, and is technically redundant if all the x cols are in there,
+      # so get outta here
+      select(-obs)
+    
+    return(out)
+    
+  } else {
+    # Just the median of every predicted point for every subject
+    # Note that this doesn't select in a paired way for the "median iteration"
+    # returns a VECTOR which needs to get slapped onto newdata
+    out %<>%
+      apply(2, median) %>%
+      t() %>%
+      c()
+    
+    newdata %<>%
+      mutate(!!pred_col := out)
+    
+    return (newdata)
+  }
   
-  newdata %<>%
-    mutate(!!pred_col := out)
-  
-  return (newdata)
 }
 
 posterior_preplot_fixef <- function (object, newdata, pred_col = "y_pred", draws = 1000) {
@@ -120,11 +143,15 @@ raw = tibble(filename = list.files("ignore/data_raw", pattern = ".txt", full.nam
               select(subj_num, condition, ppm_on, ppm_off) %>%
               pivot_longer(names_to = "on_smoking", values_to = "ppm", cols = starts_with("ppm")) %>% 
               mutate(on_smoking = recode(on_smoking, ppm_on = 1L, ppm_off = 0L),
+                     # move session_num to 0 and 1, I gotta plan
+                     condition_reverse = if_else(condition == 1L, 2L, 1L),
+                     session_num = if_else(on_smoking == 1, condition, condition_reverse),
                      ppm_z = c(scale(ppm))),
-            by = "subj_num") %>%
+            by = c("subj_num", "session_num")) %>%
+  select(-condition_reverse) %>%
   # Scrub all subjects who don't appear in demographics data
   filter(!is.na(condition)) %>%
-  mutate(on_smoking = as.integer(session_num == condition)) %>%
+  # mutate(on_smoking = as.integer(session_num == condition)) %>%
   unnest(data)
 ```
 
@@ -241,23 +268,66 @@ sdt_metrics %>%
   facet_grid(rate_type ~ exptCond + cue)
 ```
 
+### ppm diff ~ A' diff
+
+02/21/2020: Recreate Nick's correlation, but not by doing difference ~ difference
+
+```{r}
+aprime_by_ppm <- raw %>%
+  filter(valid == 1) %>%
+  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
+         on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
+         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  group_by(subj_num, ppm_z, on_smoking, exptCond, probe, corResp) %>%
+  summarize(rate = mean(resp), n_trials = n()) %>%
+  pivot_wider(names_from = corResp, values_from = rate, names_prefix = "rate_") %>%
+  mutate(aprime = sdt_aprime(rate_hit, rate_fa)) %>%
+  nest(data = -c(exptCond, probe)) %>%
+  mutate(model = map(data, ~lm(aprime ~ on_smoking * ppm_z, data = .x)))
+```
+
+
+```{r}
+aprime_by_ppm %>%
+  select(-model) %>%
+  unnest(data) %>%
+  select(-n_trials) %>%
+  pivot_wider(names_from = on_smoking, values_from = c(rate_hit, rate_fa, aprime, ppm_z)) %>%
+  ggplot(aes(x = ppm_z_off, y = aprime_off, xend = ppm_z_on, yend = aprime_on, color = interaction(exptCond, probe))) +
+  geom_segment()
+  # geom_smooth(method = "lm")
+```
+
+```{r}
+aprime_by_ppm %>%
+  select(-model) %>%
+  unnest(data) %>%
+  select(-n_trials) %>%
+  pivot_wider(names_from = on_smoking, values_from = c(rate_hit, rate_fa, aprime, ppm_z)) %>%
+  ggplot(aes(x = ))
+```
+
 
 ## model fittin
 
 As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
 
 ```{r, eval = FALSE}
-models <- tibble(name = c("full", "full_random", "control", "relational"),
-                 has_exptCond = list(0:1, 0:1, 0L, 1L)) %>%
-  mutate(data = map(has_exptCond, ~raw %>%
-                      filter(valid == 1, exptCond %in% .x)),
-         terms = map(1:n(), ~c("corResp", "probe", "on_smoking")),
-         terms = map_if(terms, lengths(has_exptCond) > 1,
-                        ~c(.x, "exptCond"),
-                        .else = ~.x),
-         ranefs = if_else(name == "full_random",
-                          "(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
-                          "(1 + corResp | subj_num)"),
+models2 <- crossing(name = c("full", "full_random"),
+                    smoking_term = c("on_smoking")) %>%
+  mutate(data = map(1:n(), ~raw %>%
+                      filter(valid == 1) %>%
+                      # EFFECT CODE TO THE HEAVENS!!!
+                      mutate(corResp = corResp - 0.5,
+                             exptCond = exptCond - 0.5,
+                             probe = recode(probe,
+                                            art = -0.5,
+                                            room = 0.5),
+                             on_smoking = on_smoking - 0.5)),
+         terms = map(smoking_term, ~c("corResp", "probe", .x, "exptCond")),
+         ranefs = case_when(name == "full_random" & smoking_term == "on_smoking" ~ paste0("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)"),
+                            name == "full_random" & smoking_term == "ppm_z" ~ paste0("(1 + (corResp + probe + exptCond)^2 | subj_num)"),
+                            TRUE ~ "(1 + corResp | subj_num)"),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
          txt_formula = paste0("resp ~ (", txt_formula, ")^3 + ", ranefs),
          model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
@@ -285,9 +355,10 @@ preplots_bysubj <- models %>%
   mutate(data = map2(data, terms, ~.x %>% select("subj_num", .y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_bysubj(.x, .y, pred_col = "resp_pred")),
          predicted = map(predicted, ~.x %>%
-                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `0` = "control", `1` = "relational")) %>%
-                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
-                                  on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
+                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
+                           mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                  probe = recode(probe, `-0.5` = "art", `0.5` = "room"),
+                                  on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")) %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
@@ -300,9 +371,10 @@ preplots_fixef <- models %>%
   mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "resp_pred")),
          predicted = map(predicted, ~.x %>%
-                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `0` = "control", `1` = "relational")) %>%
-                           mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
-                                  on_smoking = recode(on_smoking, `0` = "off", `1` = "on")) %>%
+                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
+                           mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                  probe = recode(probe, `-0.5` = "art", `0.5` = "room"),
+                                  on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")) %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
