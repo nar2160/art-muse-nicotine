@@ -14,6 +14,7 @@ require(tidyverse)
 require(magrittr)
 require(rlang)
 options(mc.cores = parallel::detectCores())
+future::plan("multiprocess")
 
 snodgrass <- function (num, denom) return((num+.5)/(denom+1))
 snodgrass_vec <- function (vec) return((sum(vec) + 0.5) / (length(vec) + 1))
@@ -298,7 +299,6 @@ sdt_metrics %>%
   facet_grid(rate_type ~ exptCond + cue)
 ```
 
-
 ### ppm diff ~ A' diff
 
 02/21/2020: Recreate Nick's correlation, but not by doing difference ~ difference
@@ -310,11 +310,43 @@ aprime_by_ppm <- raw %>%
          on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
          exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
   group_by(subj_num, ppm_z, on_smoking, exptCond, probe, corResp) %>%
-  summarize(rate = mean(resp), n_trials = n()) %>%
+  summarize(rate = mean(resp)) %>%
   pivot_wider(names_from = corResp, values_from = rate, names_prefix = "rate_") %>%
   mutate(aprime = sdt_aprime(rate_hit, rate_fa)) %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm_z)) %>%
+  mutate(ppm_z_diff = ppm_z_on - ppm_z_off,
+         aprime_diff = aprime_on - aprime_off,
+         aprime_off_c = aprime_off - 0.5) %>%
+  arrange(exptCond, probe, aprime_off, aprime_diff) %>%
+  group_by(exptCond, probe) %>%
+  mutate(rank_aprime_off = 1:n()) %>%
   nest(data = -c(exptCond, probe)) %>%
-  mutate(model = map(data, ~lm(aprime ~ on_smoking * ppm_z, data = .x)))
+  mutate(model = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_z_diff, data = .x)))
+```
+
+```{r}
+aprime_by_ppm %>%
+  select(-model) %>%
+  unnest(data) %>%
+  ggplot(aes(x = ppm_z_diff, y = aprime_diff)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_grid(probe ~ exptCond) +
+  labs("Direct recreation of Nick's original A' diff ~ ppm diff result")
+```
+
+```{r}
+aprime_by_ppm %>%
+  mutate(model = map(model, ~broom::tidy(.))) %>%
+  select(-data) %>%
+  unnest(model) %>%
+  ggplot(aes(x = estimate, y = fct_rev(term))) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_errorbarh(aes(xmin = estimate - 2*std.error, xmax = estimate + 2*std.error), height = 0) +
+  geom_point() +
+  facet_grid(probe ~ exptCond) +
+  labs(title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (z units)")
 ```
 
 
@@ -322,20 +354,251 @@ aprime_by_ppm <- raw %>%
 aprime_by_ppm %>%
   select(-model) %>%
   unnest(data) %>%
-  select(-n_trials) %>%
-  pivot_wider(names_from = on_smoking, values_from = c(rate_hit, rate_fa, aprime, ppm_z)) %>%
-  ggplot(aes(x = ppm_z_off, y = aprime_off, xend = ppm_z_on, yend = aprime_on, color = interaction(exptCond, probe))) +
-  geom_segment()
+  ggplot(aes(x = rank_aprime_off)) +
+  geom_errorbar(aes(ymin = aprime_off, ymax = aprime_on), width = 0) +
+  geom_point(aes(y = aprime_off)) +
+  facet_grid(probe ~ exptCond)
+  
   # geom_smooth(method = "lm")
 ```
 
+
+## bootstrap analysis
+
+To relieve memory stress, trialwise bootstrap information will _not_ be retained in the final form of this model object. I tried briefly to figure out how to use `rsample::bootstraps()` to do this, but it doesn't seem to readily support hierarchical 2-level bootstrapping. One could do full-on cluster bootstrapping by `nest()`-ing to get one row per subject, and then _just_ resample subjects, leaving intact their responses on particular trials. However, I want to reproduce 2-level uncertainty on the between and within-subject level. Here goes.
+
 ```{r}
-aprime_by_ppm %>%
-  select(-model) %>%
+boots_by_subj <- raw %>%
+  filter(valid == 1) %>%
+  select(-c(valid, session_num, condition, cue)) %>%
+  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
+         on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
+         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  nest(trials = -c(subj_num, ppm_z, on_smoking, exptCond, probe, corResp)) %>%
+  nest(conditions = -subj_num) %>%
+  nest(subjects = everything()) %>%
+  # note that here, 1:n() is 1:1
+  slice(rep(1:n(), each = 100)) %>%
+  mutate(iteration = 1:n(),
+         # resample outer level: subjects
+         subjects = furrr::future_map(subjects, ~sample_frac(.x, size = 1, replace = TRUE) %>%
+                          mutate(subj_num = 1:nrow(.)),
+                          .progress = TRUE)) %>%
+  unnest(subjects) %>%
+  unnest(conditions) %>%
+  # CHANGE N BOOTSTRAPS HERE
+  # resample inner level: trials (honoring condition structure)
+  mutate(boots = furrr::future_map(trials, ~bootstraps(.x, times = 1) %>%
+                       mutate(rate = map_dbl(splits, ~mean(as.data.frame(.x)$resp))) %>% 
+                       select(rate),
+                       .progress = TRUE)) %>%
+  select(-trials) %>%
+  unnest(boots) %>%
+  pivot_wider(names_from = corResp, values_from = rate, names_prefix = "rate_") %>%
+  mutate(aprime = sdt_aprime(rate_hit, rate_fa),
+         aprime = coalesce(aprime, 0.5)) %>%
+  nest(data = -iteration)
+
+boots_by_trial <- raw %>%
+  filter(valid == 1) %>%
+  select(-c(valid, session_num, condition, cue)) %>%
+  mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
+         on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
+         exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
+  nest(trials = -c(subj_num, on_smoking, exptCond, probe, corResp)) %>%
+  # CHANGE N BOOTSTRAPS HERE
+  # resample inner level: trials (honoring condition structure)
+  mutate(boots = furrr::future_map(trials, ~bootstraps(.x, times = 100) %>%
+                       mutate(iteration = 1:nrow(.),
+                              rate = map_dbl(splits, ~mean(as.data.frame(.x)$resp))) %>% 
+                       select(iteration, rate),
+                       .progress = TRUE)) %>%
+  select(-trials) %>%
+  unnest(boots) %>%
+  pivot_wider(names_from = corResp, values_from = rate, names_prefix = "rate_") %>%
+  mutate(aprime = sdt_aprime(rate_hit, rate_fa),
+         # if both hit and FA rates are 0 or 1, it NaNs out, but imputing 0.5
+         # makes sense here since they should technically be at chance
+         aprime = coalesce(aprime, 0.5)) %>%
+  group_by(subj_num, on_smoking, exptCond, probe) %>%
+  summarize_at(c("rate_hit", "rate_fa", "aprime"),
+               list(q05 = ~quantile(., .05),
+                    q25 = ~quantile(., .25),
+                    q50 = ~median(.),
+                    q75 = ~quantile(., .75),
+                    q95 = ~quantile(., .95))) %>%
+  pivot_longer(cols = contains("_q"), names_to = c("metric_type", ".value"),
+               names_pattern = "(.*)_(...)")
+
+save(boots_by_subj, boots_by_trial, file = here::here("ignore", "data_R", "boots.rda"))
+```
+
+```{r}
+load("ignore/data_R/boots.rda")
+```
+
+```{r}
+boots_by_trial %>%
+  filter(metric_type == "aprime") %>%
+  ggplot(aes(x = interaction(on_smoking, exptCond, probe), y = q50)) +
+  geom_errorbar(aes(ymin = q25, ymax = q75), width = 0) +
+  geom_point() +
+  geom_point(aes(y = aprime),
+             data = sdt_metrics %>%
+               rename(probe = cue),
+             color = "hotpink") +
+  facet_wrap(~ subj_num) +
+  labs(title = "big ass 50% bootstrap SEs")
+```
+
+### sign tests
+
+02/14/2020: Run Matlab-style `signtest()` on the on-off difference data to recreate Nick's original result
+
+02/21/2020: finish the above point, but definitely do it on the iteration-level by-subject predicted A'/hit rate/FA rates
+
+Above CORRECTED to run on bootstrapped data instead
+
+```{r}
+signtests <- sdt_metrics %>%
+  select(subj_num, exptCond, probe = cue, on_smoking, aprime, rate_hit, rate_fa) %>%
+  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(names_from = on_smoking, values_from = value, names_prefix = "value_") %>%
+  mutate(value_diff = value_on - value_off,
+         sign_value_diff = sign(value_diff),
+         sign_value_diff = na_if(sign_value_diff, 0)) %>%
+  nest(data = -c(metric_type, exptCond, probe)) %>%
+  mutate(signtest_x = map_int(data, ~sum(.x$sign_value_diff == 1 & !is.na(.x$sign_value_diff))),
+         signtest_n = map_int(data, ~sum(!is.na(.x$sign_value_diff))),
+         signtest = map2(signtest_x, signtest_n, ~binom.test(x = .x,
+                                                             n = .y,
+                                                             alternative = "two.sided")),
+         p_value = map_dbl(signtest, ~pluck(.x, "p.value")),
+         estimate = map_dbl(signtest, ~pluck(.x, "estimate")),
+         conf_lower = map_dbl(signtest, ~pluck(.x, "conf.int", 1)),
+         conf_higher = map_dbl(signtest, ~pluck(.x, "conf.int", 2)))
+
+signtests_boot <- boots_by_subj %>%
   unnest(data) %>%
-  select(-n_trials) %>%
-  pivot_wider(names_from = on_smoking, values_from = c(rate_hit, rate_fa, aprime, ppm_z)) %>%
-  ggplot(aes(x = ))
+  select(-ppm_z) %>%
+  pivot_longer(c(rate_hit, rate_fa, aprime),
+               names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(values_from = value, names_from = on_smoking, names_prefix = "value_") %>%
+  mutate(value_diff = value_on - value_off,
+         sign_value_diff = sign(value_diff),
+         sign_value_diff = na_if(sign_value_diff, 0)) %>%
+  nest(data = -c(iteration, metric_type, exptCond, probe)) %>%
+  mutate(signtest_x = map_int(data, ~sum(.x$sign_value_diff == 1 & !is.na(.x$sign_value_diff))),
+         signtest_n = map_int(data, ~sum(!is.na(.x$sign_value_diff))),
+         signtest = map2(signtest_x, signtest_n,
+                         ~binom.test(x = .x, n = .y, alternative = "two.sided")),
+         p_value = map_dbl(signtest, ~pluck(.x, "p.value")),
+         estimate = map_dbl(signtest, ~pluck(.x, "estimate")),
+         conf_lower = map_dbl(signtest, ~pluck(.x, "conf.int", 1)),
+         conf_higher = map_dbl(signtest, ~pluck(.x, "conf.int", 2))) %>%
+  group_by(metric_type, exptCond, probe) %>%
+  arrange(estimate, conf_lower) %>%
+  mutate(est_rank = 1:n())
+
+signtests_boot %>%
+  mutate(significance = p_value < .05) %>%
+  ggplot(aes(x = est_rank, y = estimate, color = significance)) +
+  geom_hline(yintercept = .5, linetype = 3) +
+  geom_errorbar(aes(ymin = conf_lower, ymax = conf_higher), width = 0.1, alpha = 0.8) +
+  geom_point(size = 0.5) +
+  geom_hline(aes(yintercept = estimate),
+             data = signtests,
+             linetype = 3,
+             color = "springgreen4") +
+  # scale_color_gradient2(low = "turquoise", mid = "black", high = "hotpink", midpoint = 0.5) +
+  facet_grid(exptCond + probe ~ metric_type) +
+  labs(title = "ON - OFF smoking binomial sign test estimates") +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+```
+
+```{r}
+wilcoxtests <- sdt_metrics %>%
+  select(subj_num, exptCond, probe = cue, on_smoking, aprime, rate_hit, rate_fa) %>%
+  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(names_from = on_smoking, values_from = value, names_prefix = "value_") %>%
+  nest(data = -c(metric_type, exptCond, probe)) %>%
+  mutate(test = map(data, ~wilcox.test(x = .x$value_on,
+                                       y = .x$value_off,
+                                       exact = FALSE,
+                                       paired = TRUE,
+                                       alternative = "two.sided")),
+         p_value = map_dbl(test, ~pluck(.x, "p.value")),
+         estimate = map_dbl(test, ~pluck(.x, "statistic")))
+
+wilcoxtests_boot <- boots_by_subj %>%
+  unnest(data) %>%
+  select(-ppm_z) %>%
+  pivot_longer(c(rate_hit, rate_fa, aprime),
+               names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(values_from = value, names_from = on_smoking, names_prefix = "value_") %>%
+  nest(data = -c(iteration, metric_type, exptCond, probe)) %>%
+  mutate(test = map(data, ~wilcox.test(x = .x$value_on,
+                                       y = .x$value_off,
+                                       exact = FALSE,
+                                       paired = TRUE,
+                                       alternative = "two.sided")),
+         p_value = map_dbl(test, ~pluck(.x, "p.value")),
+         estimate = map_dbl(test, ~pluck(.x, "statistic"))) %>%
+  group_by(metric_type, exptCond, probe) %>%
+  arrange(estimate) %>%
+  mutate(est_rank = 1:n())
+
+wilcoxtests_boot %>%
+  mutate(significance = p_value < .05) %>%
+  ggplot(aes(x = est_rank, y = estimate, color = significance)) +
+  geom_hline(yintercept = .5, linetype = 3) +
+  geom_point(size = 0.5) +
+  geom_hline(aes(yintercept = estimate),
+             data = wilcoxtests,
+             linetype = 3,
+             color = "springgreen4") +
+  # scale_color_gradient2(low = "turquoise", mid = "black", high = "hotpink", midpoint = 0.5) +
+  facet_grid(exptCond + probe ~ metric_type) +
+  labs(title = "ON - OFF smoking Wilcoxon test statistics") +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+```
+
+### A' diff ~ A' off + ppm diff
+
+```{r}
+aprime_by_ppm_boot <- boots_by_subj %>%
+  unnest(data) %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm_z)) %>%
+  mutate(ppm_z_diff = ppm_z_on - ppm_z_off,
+         aprime_diff = aprime_on - aprime_off,
+         aprime_off_c = aprime_off - 0.5) %>%
+  nest(data = -c(iteration, exptCond, probe)) %>%
+  mutate(coefs = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_z_diff, data = .x) %>%
+                       broom::tidy())) %>%
+  select(-data) %>%
+  unnest(coefs) %>%
+  arrange(exptCond, probe, term, estimate) %>%
+  group_by(exptCond, probe, term) %>%
+  mutate(rank_estimate = 1:n())
+
+aprime_by_ppm_boot %>%
+  mutate(significance = p.value < .05) %>%
+  ggplot(aes(x = rank_estimate, y = estimate, color = significance)) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  geom_errorbar(aes(ymin = estimate - 2*std.error,
+                    ymax = estimate + 2*std.error), 
+                alpha = 0.5, width = 0) +
+  geom_point() +
+  geom_hline(aes(yintercept = estimate),
+             data = aprime_by_ppm %>%
+               mutate(coefs = map(model, broom::tidy)) %>%
+               select(-data, -model) %>%
+               unnest(coefs),
+             color = "hotpink",
+             linetype = 2) +
+  facet_grid(term ~ exptCond + probe, scales = "free_y") +
+  
 ```
 
 
@@ -346,10 +609,13 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 02/21/2020: re-fit the full_random model with effect-coded everything for more directly interpretable betas. Also, fit a manipulation check model predicting valid > invalid, but with no interactions, just main effects of the other ones
 
 ```{r, eval = FALSE}
-models <- crossing(name = c("full", "full_random"),
-                    smoking_term = c("on_smoking")) %>%
+models2 <- tibble(name = c("full", "manip_check"),
+                 has_valid = list(1L, 0:1),
+                 terms = list(c("corResp", "probe", "on_smoking", "exptCond"),
+                              c("corResp", "valid", "probe", "on_smoking", "exptCond")),
+                 ranefs = c("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
+                            "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)")) %>%
   mutate(data = map(1:n(), ~raw %>%
-                      filter(valid == 1) %>%
                       # EFFECT CODE TO THE HEAVENS!!!
                       mutate(corResp = corResp - 0.5,
                              exptCond = exptCond - 0.5,
@@ -357,17 +623,16 @@ models <- crossing(name = c("full", "full_random"),
                                             art = -0.5,
                                             room = 0.5),
                              on_smoking = on_smoking - 0.5)),
-         terms = map(smoking_term, ~c("corResp", "probe", .x, "exptCond")),
-         ranefs = case_when(name == "full_random" & smoking_term == "on_smoking" ~ paste0("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)"),
-                            name == "full_random" & smoking_term == "ppm_z" ~ paste0("(1 + (corResp + probe + exptCond)^2 | subj_num)"),
-                            TRUE ~ "(1 + corResp | subj_num)"),
+         data = map2(data, has_valid, ~.x %>% filter(valid %in% .y)),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
-         txt_formula = paste0("resp ~ (", txt_formula, ")^3 + ", ranefs),
+         txt_formula = case_when(name == "full" ~ paste0("resp ~ (", txt_formula, ")^3 + ", ranefs),
+                                 name == "manip_check" ~ paste0("resp ~ ", txt_formula, " + corResp:valid + ", ranefs)),
          model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
                                                                family = binomial(link = "logit"),
                                                                data = .y,
                                                                prior = rstanarm::cauchy(0, 5),
                                                                prior_intercept = rstanarm::cauchy(0, 5))))
+
 
 save(models, file = "ignore/data_R/models_rstanarm.rda")
 ```
@@ -401,9 +666,9 @@ preplots_bysubj <- models %>%
                                   dprime = sdt_dprime(rate_hit, rate_fa)))) %>%
   select(name, predicted)
 
-preplots_noisy_bysubj <- posterior_preplot_bysubj(object = models$model[[2]],
-                                                  newdata = models$data[[2]] %>%
-                                                    select("subj_num", models$terms[[2]]),
+preplots_noisy_bysubj <- posterior_preplot_bysubj(object = models$model[[1]],
+                                                  newdata = models$data[[1]] %>%
+                                                    select("subj_num", models$terms[[1]]),
                                                   pred_col = "resp_pred", type = "trialwise", draws = 300) %>%
   mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
   mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
@@ -441,8 +706,7 @@ load("ignore/data_R/preplots_rstanarm.rda")
 ```
 
 ```{r}
-preplots_raw_bysubj <- bind_rows(model_sparse = preplots_bysubj$predicted[[1]],
-                                 model_random = preplots_bysubj$predicted[[2]],
+preplots_raw_bysubj <- bind_rows(model_random = preplots_bysubj$predicted[[1]],
                                  model_random_noisy = preplots_noisy_bysubj %>%
                                    nest(data = -iteration) %>%
                                    sample_n(1) %>%
@@ -450,9 +714,9 @@ preplots_raw_bysubj <- bind_rows(model_sparse = preplots_bysubj$predicted[[1]],
                                  raw = sdt_metrics %>%
                                    select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime, dprime),
                                  .id = "name") %>%
-  select(-dprime)
+  select(-dprime, -iteration)
 
-preplots_raw_fixef <- preplots_fixef$predicted[[2]] %>%
+preplots_raw_fixef <- preplots_fixef$predicted[[1]] %>%
   arrange(iteration, probe, exptCond, on_smoking) %>%
   group_by(iteration, probe, exptCond) %>%
   summarize(diff_rate_fa = diff(rate_fa),
@@ -504,6 +768,23 @@ preplots_params %>%
 
 Based on at least the parameter estimates of the fixed effects, it looks like the model with the random effects isn't drastically different in median estimates of most of the fixed effects. Sure the standard errors are bigger, but I think I'm ok with this. As you'll see below, allowing more random effects reduces the effective regularization of single subject d', leaving more variability in place. I think we want this!
 
+```{r}
+preplots_params %>%
+  filter(name == "manip_check") %>%
+  unnest(iterations) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram(aes(fill = name), position = "identity", alpha = 0.4) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_vline(aes(xintercept = estimate, color = name),
+             data = preplots_params %>%
+               filter(name == "manip_check") %>%
+               unnest(iterations) %>%
+               group_by(name, term) %>%
+               summarize(estimate = median(estimate)),
+             linetype = 3) +
+  facet_wrap(~ term, scales = "free")
+```
+
 ### assessing model fit
 
 #### comparing raw 'aprime' to the models
@@ -512,6 +793,7 @@ Plotting the condition-wise A' estimated from subjects' raw hit and FA rates as 
 
 ```{r}
 preplots_raw_bysubj %>%
+  filter(name != "model_random_noisy") %>%
   ggplot(aes(x = interaction(on_smoking, probe, exptCond), y = aprime, color = name)) +
   geom_line(aes(group = name)) +
   geom_point(size = 0.5) +
@@ -524,6 +806,25 @@ preplots_raw_bysubj %>%
 ```
 
 In general, I'm not too worried about discrepancies between the model-fit data and the raw data, because this shows that the random-effects model is doing a pretty good job of retaining condition-level performance that's lower, but regularizing it up a bit higher.
+
+```{r}
+preplots_raw_bysubj %>%
+  filter(name %in% c("model_random", "raw")) %>%
+  mutate(name = recode(name, model_random = "model")) %>%
+  pivot_longer(cols = c(rate_hit, rate_fa, aprime),
+               names_to = "metric_type", values_to = "value") %>%
+  pivot_wider(names_from = name, values_from = value, names_prefix = "value_") %>%
+  mutate(error = value_model - value_raw) %>%
+  group_by(metric_type, on_smoking, exptCond, probe) %>%
+  summarize(rmse = sqrt(mean(error ^ 2)),
+            mae = median(abs(error))) %>%
+  pivot_longer(cols = c(rmse, mae), names_to = "error_type", values_to = "error") %>%
+  ggplot(aes(x = "a", y = error, color = error_type)) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  geom_point() +
+  facet_grid(metric_type ~ on_smoking + exptCond + probe)
+```
+
 
 ### Plotting predicted d' and stuff
 
@@ -712,64 +1013,6 @@ preplots_raw_fixef %>%
   geom_vline(xintercept = 0, linetype = 3) +
   facet_grid(~ metric_type, scales = "free_x")
 ```
-
-### Doing significance tests on model predicted data
-
-02/14/2020: Run Matlab-style `signtest()` on the on-off difference data to recreate Nick's original result
-
-02/21/2020: finish the above point, but definitely do it on the iteration-level by-subject predicted A'/hit rate/FA rates
-
-```{r}
-signtests <- preplots_noisy_bysubj %>%
-  bind_rows(model = .,
-            raw = sdt_metrics %>% select(subj_num, exptCond, probe = cue, on_smoking, aprime, rate_hit, rate_fa),
-            .id = "name") %>%
-  mutate(iteration = coalesce(iteration, 1L)) %>%
-  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
-  pivot_wider(names_from = on_smoking, values_from = value, names_prefix = "value_") %>%
-  mutate(value_diff = value_on - value_off,
-         sign_value_diff = sign(value_diff),
-         sign_value_diff = na_if(sign_value_diff, 0)) %>%
-  nest(data = -c(name, iteration, metric_type, exptCond, probe)) %>%
-  mutate(signtest_x = map_int(data, ~sum(.x$sign_value_diff == 1 & !is.na(.x$sign_value_diff))),
-         signtest_n = map_int(data, ~sum(!is.na(.x$sign_value_diff))),
-         signtest = map2(signtest_x, signtest_n, ~binom.test(x = .x,
-                                                             n = .y,
-                                                             alternative = "two.sided")),
-         p_value = map_dbl(signtest, ~pluck(.x, "p.value")),
-         estimate = map_dbl(signtest, ~pluck(.x, "estimate")),
-         conf_lower = map_dbl(signtest, ~pluck(.x, "conf.int", 1)),
-         conf_higher = map_dbl(signtest, ~pluck(.x, "conf.int", 2)))
-
-signtests %>%
-  filter(name == "model") %>%
-  mutate(significance = p_value < .05) %>%
-  ggplot(aes(x = iteration, y = estimate, color = significance)) +
-  geom_hline(yintercept = .5, linetype = 3) +
-  geom_errorbar(aes(ymin = conf_lower, ymax = conf_higher), width = 0.1, alpha = 0.3) +
-  geom_point(size = 0.5) +
-  geom_hline(aes(yintercept = estimate),
-             data = signtests %>%
-               filter(name == "raw"),
-             linetype = 3,
-             color = "springgreen4") +
-  # scale_color_gradient2(low = "turquoise", mid = "black", high = "hotpink", midpoint = 0.5) +
-  facet_grid(exptCond + probe ~ metric_type) +
-  labs(title = "ON - OFF smoking binomial sign test p-values") +
-  theme(axis.text.x = element_text(hjust = 1, angle = 45))
-```
-
-
-```{r}
-preplots_fixef$predicted[[2]] %>%
-  select(-dprime) %>%
-  pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
-  arrange(metric_type, iteration, probe, exptCond, on_smoking) %>%
-  group_by(metric_type, iteration, exptCond, probe) %>%
-  summarize(diff_smoking = diff(value)) %>%
-  group_by(metric)
-```
-
 
 ## a simulation analysis?
 
