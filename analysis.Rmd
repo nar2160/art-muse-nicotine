@@ -367,6 +367,11 @@ aprime_by_ppm %>%
 
 To relieve memory stress, trialwise bootstrap information will _not_ be retained in the final form of this model object. I tried briefly to figure out how to use `rsample::bootstraps()` to do this, but it doesn't seem to readily support hierarchical 2-level bootstrapping. One could do full-on cluster bootstrapping by `nest()`-ing to get one row per subject, and then _just_ resample subjects, leaving intact their responses on particular trials. However, I want to reproduce 2-level uncertainty on the between and within-subject level. Here goes.
 
+03/05/2020: Generate, from the bootstrap distribution as they have been generated from the model estimates:
+
+- standard errors around the "Nick's plots" for A', hit rate, FA rate
+- all the difference of difference test statistics
+
 ```{r}
 boots_by_subj <- raw %>%
   filter(valid == 1) %>%
@@ -504,7 +509,7 @@ signtests_boot %>%
   mutate(significance = p_value < .05) %>%
   ggplot(aes(x = est_rank, y = estimate, color = significance)) +
   geom_hline(yintercept = .5, linetype = 3) +
-  geom_errorbar(aes(ymin = conf_lower, ymax = conf_higher), width = 0.1, alpha = 0.8) +
+  geom_errorbar(aes(ymin = conf_lower, ymax = conf_higher), width = 0.1, alpha = 0.5) +
   geom_point(size = 0.5) +
   geom_hline(aes(yintercept = estimate),
              data = signtests,
@@ -597,16 +602,17 @@ aprime_by_ppm_boot %>%
                unnest(coefs),
              color = "hotpink",
              linetype = 2) +
-  facet_grid(term ~ exptCond + probe, scales = "free_y") +
+  facet_grid(term ~ exptCond + probe, scales = "free_y")
   
 ```
-
 
 ## model fittin
 
 As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
 
 02/21/2020: re-fit the full_random model with effect-coded everything for more directly interpretable betas. Also, fit a manipulation check model predicting valid > invalid, but with no interactions, just main effects of the other ones
+
+03/05/2020: Fit Paul's suggested model of `trial_type` with 8 dummy regressors for each combo of `probe` x `on_smoking` x `exptCond`, inspect as with all others
 
 ```{r, eval = FALSE}
 models2 <- tibble(name = c("full", "manip_check"),
@@ -773,9 +779,9 @@ preplots_params %>%
   filter(name == "manip_check") %>%
   unnest(iterations) %>%
   ggplot(aes(x = estimate)) +
-  geom_histogram(aes(fill = name), position = "identity", alpha = 0.4) +
+  geom_histogram(aes(), position = "identity", alpha = 0.4) +
   geom_vline(xintercept = 0, linetype = 3) +
-  geom_vline(aes(xintercept = estimate, color = name),
+  geom_vline(aes(xintercept = estimate),
              data = preplots_params %>%
                filter(name == "manip_check") %>%
                unnest(iterations) %>%
