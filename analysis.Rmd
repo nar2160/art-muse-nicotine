@@ -615,29 +615,45 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 03/05/2020: Fit Paul's suggested model of `trial_type` with 8 dummy regressors for each combo of `probe` x `on_smoking` x `exptCond`, inspect as with all others
 
 ```{r, eval = FALSE}
-models2 <- tibble(name = c("full", "manip_check"),
-                 has_valid = list(1L, 0:1),
+models <- tibble(name = c("full", "manip_check", "dummy"),
+                 has_valid = list(1L, 0:1, 1L),
                  terms = list(c("corResp", "probe", "on_smoking", "exptCond"),
-                              c("corResp", "valid", "probe", "on_smoking", "exptCond")),
+                              c("corResp", "valid", "probe", "on_smoking", "exptCond"),
+                              c("corResp", "trial_type")),
                  ranefs = c("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
-                            "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)")) %>%
+                            "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)",
+                            "(1 + corResp * trial_type | subj_num)")) %>%
   mutate(data = map(1:n(), ~raw %>%
                       # EFFECT CODE TO THE HEAVENS!!!
-                      mutate(corResp = corResp - 0.5,
-                             exptCond = exptCond - 0.5,
-                             probe = recode(probe,
-                                            art = -0.5,
-                                            room = 0.5),
-                             on_smoking = on_smoking - 0.5)),
+                      mutate(
+                        trial_type = case_when(
+                          on_smoking == 0 & exptCond == 0 ~ "off_ctrl",
+                          on_smoking == 0 & exptCond == 1 ~ "off_rel",
+                          on_smoking == 1 & exptCond == 0 ~ "on_ctrl",
+                          on_smoking == 1 & exptCond == 1 ~ "on_rel",
+                          TRUE ~ NA_character_
+                        ),
+                        trial_type = paste(trial_type, probe, sep = "_"),
+                        trial_type = fct_rev(trial_type),
+                        corResp = corResp - 0.5,
+                        exptCond = exptCond - 0.5,
+                        probe = recode(probe,
+                                       art = -0.5,
+                                       room = 0.5),
+                        on_smoking = on_smoking - 0.5)),
          data = map2(data, has_valid, ~.x %>% filter(valid %in% .y)),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
-         txt_formula = case_when(name == "full" ~ paste0("resp ~ (", txt_formula, ")^3 + ", ranefs),
-                                 name == "manip_check" ~ paste0("resp ~ ", txt_formula, " + corResp:valid + ", ranefs)),
+         txt_formula = case_when(
+           name == "full" ~ paste0("(", txt_formula, ")^3"),
+           name == "manip_check" ~ paste0(txt_formula, " + corResp:valid"),
+           name == "dummy" ~ paste0("(", txt_formula, ")^2")),
+         txt_formula = paste("resp ~", txt_formula, "+", ranefs),
          model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
                                                                family = binomial(link = "logit"),
                                                                data = .y,
                                                                prior = rstanarm::cauchy(0, 5),
-                                                               prior_intercept = rstanarm::cauchy(0, 5))))
+                                                               prior_intercept = rstanarm::cauchy(0, 5),
+                                                               init_r = 1)))
 
 
 save(models, file = "ignore/data_R/models_rstanarm.rda")
