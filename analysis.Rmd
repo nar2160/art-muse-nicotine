@@ -362,17 +362,44 @@ aprime_by_ppm %>%
   # geom_smooth(method = "lm")
 ```
 
+### correlation matrices
+
+03/13/2020: Get these correlation matrices from Nick
+
+```{r}
+sdt_metrics %>%
+  select(subj_num, on_smoking, exptCond, probe = cue, aprime) %>%
+  unite(col = trial_type, on_smoking, exptCond, probe) %>%
+  ungroup() %>%
+  pivot_wider(values_from = aprime, names_from = trial_type) %>%
+  select(-subj_num) %>%
+  cor() %>%
+  as_tibble(rownames = "row") %>%
+  pivot_longer(cols = -row, names_to = "col", values_to = "correlation") %>%
+  mutate(correlation = na_if(correlation, 1)) %>%
+  ggplot(aes(x = fct_rev(col), y = row, fill = correlation)) +
+  geom_raster() +
+  viridis::scale_fill_viridis() +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+```
+
+```{r}
+sdt_metrics %>%
+  select(subj_num, on_smoking, exptCond, probe = cue, aprime) %>%
+  unite(col = trial_type, on_smoking, exptCond, probe) %>%
+  ungroup() %>%
+  pivot_wider(values_from = aprime, names_from = trial_type) %>%
+  select(-subj_num) %>%
+  prcomp() %>%
+  factoextra::fviz_pca_var()
+```
+
 
 ## bootstrap analysis
 
 To relieve memory stress, trialwise bootstrap information will _not_ be retained in the final form of this model object. I tried briefly to figure out how to use `rsample::bootstraps()` to do this, but it doesn't seem to readily support hierarchical 2-level bootstrapping. One could do full-on cluster bootstrapping by `nest()`-ing to get one row per subject, and then _just_ resample subjects, leaving intact their responses on particular trials. However, I want to reproduce 2-level uncertainty on the between and within-subject level. Here goes.
 
-03/05/2020: Generate, from the bootstrap distribution as they have been generated from the model estimates:
-
-- standard errors around the "Nick's plots" for A', hit rate, FA rate
-- all the difference of difference test statistics
-
-```{r}
+```{r, eval = FALSE}
 boots_by_subj <- raw %>%
   filter(valid == 1) %>%
   select(-c(valid, session_num, condition, cue)) %>%
@@ -455,6 +482,66 @@ boots_by_trial %>%
   facet_wrap(~ subj_num) +
   labs(title = "big ass 50% bootstrap SEs")
 ```
+
+### Standard errors on Nick's Plots (tm)
+
+03/05/2020: Generate, from the bootstrap distribution as they have been generated from the model estimates:
+
+- standard errors around the "Nick's plots" for A', hit rate, FA rate
+- all the difference of difference test statistics
+
+### Difference of differences
+
+```{r}
+diffs_boot <- boots_by_subj %>%
+  unnest(data) %>%
+  # need to remove this to let the summarizing do its thing properly
+  select(-ppm_z) %>%
+  arrange(iteration, subj_num, probe, exptCond, on_smoking) %>%
+  group_by(iteration, subj_num, probe, exptCond) %>%
+  summarize(diff_rate_fa = diff(rate_fa),
+            diff_rate_hit = diff(rate_hit),
+            diff_aprime = diff(aprime)) %>%
+  pivot_longer(starts_with("diff"), names_to = "metric_type", values_to = "diff_smoking", names_prefix = "diff_") %>%
+  # group_by(iteration, probe, exptCond, metric_type) %>%
+  # summarize(median_diff_smoking = median(diff_smoking),
+  #           mean_diff_smoking = mean(diff_smoking)) %>%
+  nest(diffs = -c(probe, exptCond, metric_type)) %>%
+  left_join(sdt_metrics %>%
+              rename(probe = cue) %>%
+              arrange(subj_num, probe, exptCond, on_smoking) %>%
+              group_by(subj_num, probe, exptCond) %>%
+              summarize(diff_rate_fa = diff(rate_fa),
+                        diff_rate_hit = diff(rate_hit),
+                        diff_aprime = diff(aprime)) %>%
+              ungroup() %>%
+              pivot_longer(starts_with("diff"), names_to = "metric_type", values_to = "diff_smoking", names_prefix = "diff_") %>%
+              group_by(probe, exptCond, metric_type) %>%
+              summarize(raw_median_diff_smoking = median(diff_smoking),
+                        raw_mean_diff_smoking = mean(diff_smoking)),
+            by = c("probe", "exptCond", "metric_type"))
+```
+
+just diff smoking:
+
+```{r}
+diffs_boot %>%
+  select(probe, exptCond, metric_type, diffs) %>%
+  unnest(diffs) %>%
+  group_by(iteration, probe, exptCond, metric_type) %>%
+  summarize(median_diff_smoking = median(diff_smoking),
+            mean_diff_smoking = mean(diff_smoking)) %>%
+  ggplot(aes(x = median_diff_smoking, fill = probe)) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  facet_grid(exptCond ~ metric_type, scales = "free_x")
+```
+
+diff smoking probe:
+
+diff smoking exptCond:
+
+diff smoking probe exptCond:
 
 ### sign tests
 
@@ -613,6 +700,8 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 02/21/2020: re-fit the full_random model with effect-coded everything for more directly interpretable betas. Also, fit a manipulation check model predicting valid > invalid, but with no interactions, just main effects of the other ones
 
 03/05/2020: Fit Paul's suggested model of `trial_type` with 8 dummy regressors for each combo of `probe` x `on_smoking` x `exptCond`, inspect as with all others
+
+03/13/2020: Fit the Paul dummy model separately with 4 dummy regressors for art and room trials
 
 ```{r, eval = FALSE}
 models <- tibble(name = c("full", "manip_check", "dummy"),
@@ -871,15 +960,15 @@ You'll go on to see that the predicted effects map well on to raw-derived _mean_
 preplots_raw_bysubj %>%
   mutate(on_smoking = fct_rev(on_smoking)) %>%
   ggplot(aes(x = on_smoking, y = aprime, color = name)) +
-  geom_line(aes(group = interaction(subj_num, name)), alpha = 0.15) +
+  geom_line(aes(group = interaction(subj_num, name)), alpha = 0.1) +
   geom_jitter(width = 0.1, alpha = 0.2) +
   geom_line(aes(group = name),
             data = preplots_raw_bysubj %>%
               mutate(on_smoking = fct_rev(on_smoking)) %>%
               group_by(name, on_smoking, exptCond, probe) %>%
               summarize(aprime = median(aprime)),
-            size = 2,
-            alpha = 0.6) +
+            size = 1.5,
+            alpha = 0.8) +
   geom_hline(yintercept = 0.5, linetype = 3) +
   labs(title = "cholinergic modulation of A' by all the conditions") +
   facet_grid( ~ exptCond + probe)
@@ -902,7 +991,7 @@ preplots_raw_bysubj %>%
               group_by(name, on_smoking, probe, exptCond, rate_type) %>%
               summarize(rate = mean(rate)),
             size = 1) +
-  geom_jitter(width = 0.1, alpha = 0.5) +
+  geom_jitter(width = 0.1, alpha = 0.2) +
   labs(title = "cholinergic modulation of hit/FA rate by all the conditions") +
   facet_grid(rate_type ~ exptCond + probe)
 ```
@@ -992,7 +1081,7 @@ preplots_fixef %>%
             data = sdt_metrics %>%
               rename(probe = cue) %>%
               group_by(on_smoking, exptCond, probe) %>%
-              summarize(!!var := median({{sym_var}})),
+              summarize(!!var := mean({{sym_var}})),
             linetype = 3,
             size = 1) +
   scale_color_manual(values = c("deeppink1", "deepskyblue1", "deeppink4", "deepskyblue4")) +
