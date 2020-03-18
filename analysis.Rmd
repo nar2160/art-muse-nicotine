@@ -367,11 +367,14 @@ aprime_by_ppm %>%
 03/13/2020: Get these correlation matrices from Nick
 
 ```{r}
+var = "aprime"
+sym_var = sym(var)
+
 sdt_metrics %>%
-  select(subj_num, on_smoking, exptCond, probe = cue, aprime) %>%
+  select(subj_num, on_smoking, exptCond, probe = cue, {{sym_var}}) %>%
   unite(col = trial_type, on_smoking, exptCond, probe) %>%
   ungroup() %>%
-  pivot_wider(values_from = aprime, names_from = trial_type) %>%
+  pivot_wider(values_from = {{sym_var}}, names_from = trial_type) %>%
   select(-subj_num) %>%
   cor() %>%
   as_tibble(rownames = "row") %>%
@@ -385,13 +388,13 @@ sdt_metrics %>%
 
 ```{r}
 sdt_metrics %>%
-  select(subj_num, on_smoking, exptCond, probe = cue, aprime) %>%
+  select(subj_num, on_smoking, exptCond, probe = cue, {{sym_var}}) %>%
   unite(col = trial_type, on_smoking, exptCond, probe) %>%
   ungroup() %>%
-  pivot_wider(values_from = aprime, names_from = trial_type) %>%
+  pivot_wider(values_from = {{sym_var}}, names_from = trial_type) %>%
   select(-subj_num) %>%
   prcomp() %>%
-  factoextra::fviz_pca_var()
+  factoextra::fviz_pca_var(col.var = "contrib")
 ```
 
 
@@ -704,15 +707,26 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 03/13/2020: Fit the Paul dummy model separately with 4 dummy regressors for art and room trials
 
 ```{r, eval = FALSE}
-models <- tibble(name = c("full", "manip_check", "dummy"),
-                 has_valid = list(1L, 0:1, 1L),
+models2 <- tibble(name = c("full", "manip_check", "dummy_all", "dummy_art", "dummy_room", "rel_room"),
+                 has_valid = list(1L, 0:1, 1L, 1L, 1L, 1L),
+                 has_probe = list(c("art", "room"), c("art", "room"), c("art", "room"), "art", "room", "room"),
+                 has_exptCond = list(0:1, 0:1, 0:1, 0:1, 0:1, 1L),
                  terms = list(c("corResp", "probe", "on_smoking", "exptCond"),
                               c("corResp", "valid", "probe", "on_smoking", "exptCond"),
-                              c("corResp", "trial_type")),
+                              c("corResp", "trial_type"),
+                              c("corResp", "trial_type"),
+                              c("corResp", "trial_type"),
+                              c("corResp", "on_smoking")),
                  ranefs = c("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
                             "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)",
-                            "(1 + corResp * trial_type | subj_num)")) %>%
-  mutate(data = map(1:n(), ~raw %>%
+                            "(1 + corResp * trial_type | subj_num)",
+                            "(1 + corResp * trial_type | subj_num)",
+                            "(1 + corResp * trial_type | subj_num)",
+                            "(1 + corResp * on_smoking | subj_num)")) %>%
+  mutate(data = map(has_valid, ~raw %>% filter(valid %in% .x)),
+         data = map2(data, has_probe, ~.x %>% filter(probe %in% .y)),
+         data = map2(data, has_exptCond, ~.x %>% filter(exptCond %in% .y)),
+         data = map(data, ~.x %>%
                       # EFFECT CODE TO THE HEAVENS!!!
                       mutate(
                         trial_type = case_when(
@@ -730,18 +744,19 @@ models <- tibble(name = c("full", "manip_check", "dummy"),
                                        art = -0.5,
                                        room = 0.5),
                         on_smoking = on_smoking - 0.5)),
-         data = map2(data, has_valid, ~.x %>% filter(valid %in% .y)),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
          txt_formula = case_when(
            name == "full" ~ paste0("(", txt_formula, ")^3"),
            name == "manip_check" ~ paste0(txt_formula, " + corResp:valid"),
-           name == "dummy" ~ paste0("(", txt_formula, ")^2")),
+           startsWith(name, "dummy") | name == "rel_room" ~ paste0("(", txt_formula, ")^2")),
          txt_formula = paste("resp ~", txt_formula, "+", ranefs),
          model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
                                                                family = binomial(link = "logit"),
                                                                data = .y,
                                                                prior = rstanarm::cauchy(0, 5),
                                                                prior_intercept = rstanarm::cauchy(0, 5),
+                                                               # MIGHT just need this for the dummy_all one...?
+                                                               # and then rel_room needs iter = 3000
                                                                init_r = 1)))
 
 
@@ -765,57 +780,42 @@ preplots_bysubj <- models %>%
   select(name, terms, data, model) %>%
   mutate(data = map2(data, terms, ~.x %>% select("subj_num", .y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_bysubj(.x, .y, pred_col = "resp_pred", type = "median", draws = 500)),
-         predicted = map_if(predicted, name != "dummy", ~.x %>%
-                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
-                           mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
-                                  probe = recode(probe, `-0.5` = "art", `0.5` = "room"),
-                                  on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")),
-                           .else = ~.x %>%
-                             separate(trial_type,
-                                      into = c("on_smoking", "exptCond", "probe")) %>%
-                             mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
-                                    exptCond = recode(exptCond,
-                                                      ctrl = "control",
-                                                      rel = "relational"))),
+         predicted = map_if(predicted, !startsWith(name, "dummy"),
+                            ~.x %>%
+                              mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
+                              mutate_at(vars(one_of("probe")), ~recode(.x, `-0.5` = "art", `0.5` = "room")) %>%
+                              mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                     on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")),
+                            .else = ~.x %>%
+                              separate(trial_type,
+                                       into = c("on_smoking", "exptCond", "probe")) %>%
+                              mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                     exptCond = recode(exptCond,
+                                                       ctrl = "control",
+                                                       rel = "relational"))),
          predicted = map(predicted, ~.x %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
                            mutate(aprime = sdt_aprime(rate_hit, rate_fa)))) %>%
   select(name, predicted)
-
-preplots_noisy_bysubj <- posterior_preplot_bysubj(object = models$model[[1]],
-                                                  newdata = models$data[[1]] %>%
-                                                    select("subj_num", models$terms[[1]]),
-                                                  pred_col = "resp_pred", type = "trialwise", draws = 300) %>%
-  mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
-  mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
-         probe = recode(probe, `-0.5` = "art", `0.5` = "room"),
-         on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")) %>%
-  group_by(iteration, subj_num, on_smoking, exptCond, probe, corResp) %>%
-  summarize(resp_pred = mean(resp_pred)) %>%
-  ungroup() %>%
-  pivot_wider(names_from = corResp,
-              values_from = resp_pred,
-              names_prefix = "rate_") %>%
-  mutate(aprime = sdt_aprime(rate_hit, rate_fa))
 
 preplots_fixef <- models %>%
   select(name, terms, data, model) %>%
   mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "resp_pred")),
-         predicted = map_if(predicted, name != "dummy", ~.x %>%
-                           mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
-                           mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
-                                  probe = recode(probe, `-0.5` = "art", `0.5` = "room"),
-                                  on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")),
-                           .else = ~.x %>%
-                             separate(trial_type,
-                                      into = c("on_smoking", "exptCond", "probe")) %>%
-                             mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
-                                    exptCond = recode(exptCond,
-                                                      ctrl = "control",
-                                                      rel = "relational"))),
+         predicted = map_if(predicted, !startsWith(name, "dummy"), ~.x %>%
+                              mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
+                              mutate_at(vars(one_of("probe")), ~recode(.x, `-0.5` = "art", `0.5` = "room")) %>%
+                              mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                     on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")),
+                            .else = ~.x %>%
+                              separate(trial_type,
+                                       into = c("on_smoking", "exptCond", "probe")) %>%
+                              mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
+                                     exptCond = recode(exptCond,
+                                                       ctrl = "control",
+                                                       rel = "relational"))),
          predicted = map(predicted, ~.x %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
@@ -823,7 +823,7 @@ preplots_fixef <- models %>%
                            mutate(aprime = sdt_aprime(rate_hit, rate_fa)))) %>%
   select(name, predicted)
 
-save(preplots_params, preplots_bysubj, preplots_noisy_bysubj, preplots_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
+save(preplots_params, preplots_bysubj, preplots_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
 ```
 
 ```{r}
@@ -831,15 +831,28 @@ load("ignore/data_R/preplots_rstanarm.rda")
 ```
 
 ```{r}
-preplots_raw_bysubj <- bind_rows(model_2x2x2 = preplots_bysubj$predicted[[1]],
-                                 model_dummy = preplots_bysubj$predicted[[3]],
-                                 raw = sdt_metrics %>%
-                                   select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime),
-                                 .id = "name")
+preplots_raw_bysubj <- preplots_bysubj %>%
+  filter(name != "manip_check") %>%
+  mutate(name = recode(name,
+                       full = "2x2x2",
+                       dummy_art = "dummy_sep",
+                       dummy_room = "dummy_sep"),
+         name = paste0("model_", name)) %>%
+  unnest(predicted) %>%
+  mutate(probe = if_else(name == "model_rel_room", "room", probe),
+         exptCond = if_else(name == "model_rel_room", "relational", exptCond)) %>%
+  bind_rows(sdt_metrics %>%
+              select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime) %>%
+              mutate(name = "raw"))
 
 preplots_raw_fixef <- preplots_fixef %>%
   filter(name != "manip_check") %>%
+  mutate(name = recode(name,
+                       dummy_art = "dummy_sep",
+                       dummy_room = "dummy_sep")) %>%
   unnest(predicted) %>% 
+  mutate(probe = if_else(name == "model_rel_room", "room", probe),
+         exptCond = if_else(name == "model_rel_room", "relational", exptCond)) %>%
   arrange(name, iteration, probe, exptCond, on_smoking) %>%
   group_by(name, iteration, probe, exptCond) %>%
   summarize(diff_rate_fa = diff(rate_fa),
@@ -875,20 +888,20 @@ Parameter estimates from model 1 and model 2, where both control and relational 
 ```{r}
 plot_params <- function (df, model_name) {
   df %>%
-    filter(name == model_name) %>%
+    filter(startsWith(name, model_name)) %>%
     unnest(iterations) %>%
-    ggplot(aes(x = estimate)) +
+    ggplot(aes(x = estimate, fill = name)) +
     geom_histogram(position = "identity", alpha = 0.4) +
     geom_vline(xintercept = 0, linetype = 3, color = "purple") +
-    geom_vline(aes(xintercept = estimate),
+    geom_vline(aes(xintercept = estimate, color = name),
                data = df %>%
-                 filter(name == model_name) %>%
+                 filter(startsWith(name, model_name)) %>%
                  unnest(iterations) %>%
-                 group_by(term) %>%
+                 group_by(name, term) %>%
                  summarize(estimate = median(estimate)),
                linetype = 3) +
     facet_wrap(~ term, scales = "free") +
-    labs(title = glue::glue("visual coefficients/SEs for model: {model_name}"))
+    labs(title = glue::glue("visual coefficients/SEs for model(s): {model_name}"))
 }
 
 preplots_params %>%
@@ -907,6 +920,11 @@ preplots_params %>%
   plot_params("dummy")
 ```
 
+```{r}
+preplots_params %>%
+  plot_params("rel_room")
+```
+
 ### assessing model fit
 
 #### comparing raw 'aprime' to the models
@@ -915,7 +933,7 @@ Plotting the condition-wise A' estimated from subjects' raw hit and FA rates as 
 
 ```{r}
 preplots_raw_bysubj %>%
-  ggplot(aes(x = interaction(on_smoking, probe, exptCond), y = aprime, color = name)) +
+  ggplot(aes(x = interaction(on_smoking, exptCond, probe), y = aprime, color = name)) +
   geom_line(aes(group = name)) +
   geom_point(size = 0.5) +
   labs(x = "every sub-condition",
@@ -945,7 +963,7 @@ preplots_raw_bysubj %>%
   pivot_longer(cols = c(rmse, mae), names_to = "error_type", values_to = "error") %>%
   ggplot(aes(x = error_type, y = error, color = name)) +
   geom_hline(yintercept = 0, linetype = 3) +
-  geom_point() +
+  geom_point(alpha = 0.6) +
   facet_grid(metric_type ~ on_smoking + exptCond + probe)
 ```
 
@@ -1057,6 +1075,7 @@ preplots_fixef %>%
        subtitle = "Big dots: across-subject MEDIANS from raw data") +
   facet_grid(metric_type ~ name, scales = "free_y")
 ```
+
 
 ### plotting test statistics
 
