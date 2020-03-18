@@ -212,6 +212,11 @@ raw %>%
 
 Pretty sure most of these hinge on manually calculating A'/d' and such.
 
+03/18/2020:
+
+- Look over RT analyses this way before fitting the big models to RT
+- check for improvement between first and second session
+
 ### Manually calculating SDT metrics: Craazy right?
 
 ```{r}
@@ -302,6 +307,11 @@ sdt_metrics %>%
 ### ppm diff ~ A' diff
 
 02/21/2020: Recreate Nick's correlation, but not by doing difference ~ difference
+
+03/18/2020:
+
+- **major plot**: residualized A' difference ~ raw ppm difference
+- **minor plot**: coefplot of A' diff ~ A' off + ppm diff models for each of the 4 conditions
 
 ```{r}
 aprime_by_ppm <- raw %>%
@@ -696,6 +706,16 @@ aprime_by_ppm_boot %>%
   
 ```
 
+```{r}
+aprime_by_ppm_boot %>%
+  filter(term == "ppm_z_diff") %>%
+  mutate(significance = p.value < .05) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram(bins = 20) +
+  facet_grid( ~ exptCond + probe, scales = "free_x")
+```
+
+
 ## model fittin
 
 As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way interactions with `corResp` are allowed to vary by subject as well, then do all the model diagnosis stuff per usual
@@ -705,6 +725,8 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 03/05/2020: Fit Paul's suggested model of `trial_type` with 8 dummy regressors for each combo of `probe` x `on_smoking` x `exptCond`, inspect as with all others
 
 03/13/2020: Fit the Paul dummy model separately with 4 dummy regressors for art and room trials
+
+03/18/2020: Fit the dummy model separately for each `exptCond * probe` condition
 
 ```{r, eval = FALSE}
 models2 <- tibble(name = c("full", "manip_check", "dummy_all", "dummy_art", "dummy_room", "rel_room"),
@@ -820,7 +842,12 @@ preplots_fixef <- models %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
-                           mutate(aprime = sdt_aprime(rate_hit, rate_fa)))) %>%
+                           mutate(aprime = sdt_aprime(rate_hit, rate_fa))),
+         predicted = map_if(predicted, name == "rel_room",
+                            ~.x %>%
+                              mutate(probe = "room",
+                                     exptCond = "relational"),
+                            .else = ~.x)) %>%
   select(name, predicted)
 
 save(preplots_params, preplots_bysubj, preplots_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
@@ -839,8 +866,6 @@ preplots_raw_bysubj <- preplots_bysubj %>%
                        dummy_room = "dummy_sep"),
          name = paste0("model_", name)) %>%
   unnest(predicted) %>%
-  mutate(probe = if_else(name == "model_rel_room", "room", probe),
-         exptCond = if_else(name == "model_rel_room", "relational", exptCond)) %>%
   bind_rows(sdt_metrics %>%
               select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime) %>%
               mutate(name = "raw"))
@@ -851,8 +876,6 @@ preplots_raw_fixef <- preplots_fixef %>%
                        dummy_art = "dummy_sep",
                        dummy_room = "dummy_sep")) %>%
   unnest(predicted) %>% 
-  mutate(probe = if_else(name == "model_rel_room", "room", probe),
-         exptCond = if_else(name == "model_rel_room", "relational", exptCond)) %>%
   arrange(name, iteration, probe, exptCond, on_smoking) %>%
   group_by(name, iteration, probe, exptCond) %>%
   summarize(diff_rate_fa = diff(rate_fa),
@@ -884,6 +907,14 @@ preplots_raw_fixef <- preplots_fixef %>%
 ### parameter estimates
 
 Parameter estimates from model 1 and model 2, where both control and relational trials are included and `exptCond` is used as a predictor to look at interactions of d' and all conditions. Model 1 fixes all interaction effects, and only has a random effect of intercept and `corResp` (overall d'), while model 2 allows all second-order interactions to vary by subject as well.
+
+03/18/2020:
+
+- **minor plot**: coefplot from 2x2x2 model
+- **minor result**: Report valid > invalid A' from `manip_check`
+- **major result**: describe various ctrl/rel room/art things
+- **major result**: describe on/off smoking differences
+- **minor result**: describe converging results from alternate model fits
 
 ```{r}
 plot_params <- function (df, model_name) {
@@ -961,9 +992,9 @@ preplots_raw_bysubj %>%
   summarize(rmse = sqrt(mean(error ^ 2)),
             mae = median(abs(error))) %>%
   pivot_longer(cols = c(rmse, mae), names_to = "error_type", values_to = "error") %>%
-  ggplot(aes(x = error_type, y = error, color = name)) +
+  ggplot(aes(x = error_type, y = error, fill = name)) +
   geom_hline(yintercept = 0, linetype = 3) +
-  geom_point(alpha = 0.6) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
   facet_grid(metric_type ~ on_smoking + exptCond + probe)
 ```
 
@@ -973,6 +1004,8 @@ preplots_raw_bysubj %>%
 #### Reproducing Nick's plots (ish), with model on top
 
 You'll go on to see that the predicted effects map well on to raw-derived _mean_ values for A', hit rate, and false alarm rate. When the plots are rendered with raw-derived _median_ values, the between-condition slopes are a little steeper, but maybe not in an interesting way.
+
+03/18/2020: **major plot**: Do the Nick's plot of A' with on smoking on the right, only the dots and spaghetti from the raw data, and only the fat model fit line from the 2x2x2 model
 
 ```{r}
 preplots_raw_bysubj %>%
@@ -1051,7 +1084,7 @@ preplots_raw_fixef %>%
 
 ```{r}
 preplots_fixef %>%
-  filter(name != "manip_check") %>%
+  filter(!(name %in% c("manip_check", "rel_room"))) %>%
   unnest(predicted) %>%
   pivot_longer(c(aprime, rate_hit, rate_fa), names_to = "metric_type", values_to = "value") %>%
   arrange(name, metric_type, iteration, probe, exptCond, on_smoking) %>%
