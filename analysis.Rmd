@@ -232,6 +232,8 @@ sdt_metrics <- raw %>%
          aprime_snod = sdt_aprime(snod_hit, snod_fa),
          dprime = sdt_dprime(snod_hit, snod_fa),
          pr = sdt_pr(rate_hit, rate_fa))
+
+save(raw, sdt_metrics, file = here::here("ignore", "data_R", "raw.rda"))
 ```
 
 ```{r}
@@ -319,20 +321,33 @@ aprime_by_ppm <- raw %>%
   mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
          on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
          exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  group_by(subj_num, ppm_z, on_smoking, exptCond, probe, corResp) %>%
+  group_by(subj_num, ppm, on_smoking, exptCond, probe, corResp) %>%
   summarize(rate = mean(resp)) %>%
   pivot_wider(names_from = corResp, values_from = rate, names_prefix = "rate_") %>%
   mutate(aprime = sdt_aprime(rate_hit, rate_fa)) %>%
   select(-starts_with("rate")) %>%
-  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm_z)) %>%
-  mutate(ppm_z_diff = ppm_z_on - ppm_z_off,
+  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm)) %>%
+  mutate(ppm_diff = ppm_on - ppm_off,
          aprime_diff = aprime_on - aprime_off,
          aprime_off_c = aprime_off - 0.5) %>%
   arrange(exptCond, probe, aprime_off, aprime_diff) %>%
   group_by(exptCond, probe) %>%
   mutate(rank_aprime_off = 1:n()) %>%
   nest(data = -c(exptCond, probe)) %>%
-  mutate(model = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_z_diff, data = .x)))
+  mutate(resid_aprime_diff = map(data, ~lm(aprime_diff ~ aprime_off_c, data = .x) %>%
+                                   broom::augment() %>%
+                                   select(aprime_diff_resid = .resid)),
+         resid_ppm_diff = map(data, ~lm(ppm_diff ~ aprime_off_c, data = .x) %>%
+                                broom::augment() %>%
+                                select(ppm_diff_resid = .resid)),
+         data = pmap(list(data, resid_aprime_diff, resid_ppm_diff),
+                     function(a, b, c) {bind_cols(a, b, c)}),
+         model = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_diff, data = .x)),
+         resid_augs = map(data, ~lm(aprime_diff_resid ~ ppm_diff_resid, data = .x) %>%
+                            broom::augment() %>%
+                            select(aprime_diff_fit = .fitted)),
+         data = map2(data, resid_augs, ~bind_cols(.x, .y))) %>%
+  select(-starts_with("resid"))
 ```
 
 ```{r}
@@ -345,20 +360,6 @@ aprime_by_ppm %>%
   facet_grid(probe ~ exptCond) +
   labs("Direct recreation of Nick's original A' diff ~ ppm diff result")
 ```
-
-```{r}
-aprime_by_ppm %>%
-  mutate(model = map(model, ~broom::tidy(.))) %>%
-  select(-data) %>%
-  unnest(model) %>%
-  ggplot(aes(x = estimate, y = fct_rev(term))) +
-  geom_vline(xintercept = 0, linetype = 3) +
-  geom_errorbarh(aes(xmin = estimate - 2*std.error, xmax = estimate + 2*std.error), height = 0) +
-  geom_point() +
-  facet_grid(probe ~ exptCond) +
-  labs(title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (z units)")
-```
-
 
 ```{r}
 aprime_by_ppm %>%
@@ -419,11 +420,11 @@ boots_by_subj <- raw %>%
   mutate(corResp = recode(corResp, `0` = "fa", `1` = "hit"),
          on_smoking = recode(on_smoking, `0` = "off", `1` = "on"),
          exptCond = recode(exptCond, `0` = "control", `1` = "relational")) %>%
-  nest(trials = -c(subj_num, ppm_z, on_smoking, exptCond, probe, corResp)) %>%
+  nest(trials = -c(subj_num, ppm, on_smoking, exptCond, probe, corResp)) %>%
   nest(conditions = -subj_num) %>%
   nest(subjects = everything()) %>%
   # note that here, 1:n() is 1:1
-  slice(rep(1:n(), each = 100)) %>%
+  slice(rep(1:n(), each = 200)) %>%
   mutate(iteration = 1:n(),
          # resample outer level: subjects
          subjects = furrr::future_map(subjects, ~sample_frac(.x, size = 1, replace = TRUE) %>%
@@ -433,7 +434,7 @@ boots_by_subj <- raw %>%
   unnest(conditions) %>%
   # CHANGE N BOOTSTRAPS HERE
   # resample inner level: trials (honoring condition structure)
-  mutate(boots = furrr::future_map(trials, ~bootstraps(.x, times = 1) %>%
+  mutate(boots = furrr::future_map(trials, ~rsample::bootstraps(.x, times = 1) %>%
                        mutate(rate = map_dbl(splits, ~mean(as.data.frame(.x)$resp))) %>% 
                        select(rate),
                        .progress = TRUE)) %>%
@@ -453,7 +454,7 @@ boots_by_trial <- raw %>%
   nest(trials = -c(subj_num, on_smoking, exptCond, probe, corResp)) %>%
   # CHANGE N BOOTSTRAPS HERE
   # resample inner level: trials (honoring condition structure)
-  mutate(boots = furrr::future_map(trials, ~bootstraps(.x, times = 100) %>%
+  mutate(boots = furrr::future_map(trials, ~rsample::bootstraps(.x, times = 100) %>%
                        mutate(iteration = 1:nrow(.),
                               rate = map_dbl(splits, ~mean(as.data.frame(.x)$resp))) %>% 
                        select(iteration, rate),
@@ -674,18 +675,42 @@ wilcoxtests_boot %>%
 aprime_by_ppm_boot <- boots_by_subj %>%
   unnest(data) %>%
   select(-starts_with("rate")) %>%
-  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm_z)) %>%
-  mutate(ppm_z_diff = ppm_z_on - ppm_z_off,
+  pivot_wider(names_from = on_smoking, values_from = c(aprime, ppm)) %>%
+  mutate(ppm_diff = ppm_on - ppm_off,
          aprime_diff = aprime_on - aprime_off,
          aprime_off_c = aprime_off - 0.5) %>%
   nest(data = -c(iteration, exptCond, probe)) %>%
-  mutate(coefs = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_z_diff, data = .x) %>%
+  mutate(resid_aprime_diff = map(data, ~lm(aprime_diff ~ aprime_off_c, data = .x) %>% broom::augment() %>% select(aprime_diff_resid = .resid)),
+         resid_ppm_diff = map(data, ~lm(ppm_diff ~ aprime_off_c, data = .x) %>% broom::augment() %>% select(ppm_diff_resid = .resid)),
+         data = pmap(list(data, resid_aprime_diff, resid_ppm_diff), function(a, b, c) {bind_cols(a, b, c)}),
+         model = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_diff, data = .x)),
+         model_resid = map(data, ~lm(aprime_diff_resid ~ ppm_diff_resid, data = .x)),
+         coefs = map(data, ~lm(aprime_diff ~ aprime_off_c + ppm_diff, data = .x) %>%
                        broom::tidy())) %>%
-  select(-data) %>%
-  unnest(coefs) %>%
-  arrange(exptCond, probe, term, estimate) %>%
-  group_by(exptCond, probe, term) %>%
-  mutate(rank_estimate = 1:n())
+  left_join(aprime_by_ppm %>%
+              select(exptCond, probe, data_raw = data, coefs_raw = model) %>%
+              mutate(coefs_raw = map(coefs_raw,
+                                     ~broom::tidy(.) %>%
+                                       rename_if(is.numeric, ~paste0(., "_raw")))),
+            by = c("exptCond", "probe")) %>%
+  mutate(predicted_resid = map2(data_raw, model_resid,
+                                ~.x %>%
+                                  select(ppm_diff_resid) %>%
+                                  predict(.y, newdata = .)),
+         data_raw = map2(data_raw, predicted_resid,
+                         ~.x %>%
+                           mutate(obs = 1:nrow(.), predicted = .y))) %>%
+    select(-ends_with("resid"), -data)
+
+save(aprime_by_ppm, aprime_by_ppm_boot, file = here::here("ignore", "data_R", "aprime_by_ppm.rda"))
+```
+
+```{r}
+
+  # unnest(coefs) %>%
+  # arrange(exptCond, probe, term, estimate) %>%
+  # group_by(exptCond, probe, term) %>%
+  # mutate(rank_estimate = 1:n())
 
 aprime_by_ppm_boot %>%
   mutate(significance = p.value < .05) %>%
@@ -715,6 +740,39 @@ aprime_by_ppm_boot %>%
   facet_grid( ~ exptCond + probe, scales = "free_x")
 ```
 
+```{r major-plot-aprime-ppm-resid}
+aprime_by_ppm %>%
+  select(-model) %>%
+  unnest(data) %>%
+  ggplot(aes(x = ppm_diff_resid, y = aprime_diff_resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "black") +
+  facet_grid(probe ~ exptCond) +
+  labs(x = "ppm_diff | aprime_off",
+       y = "aprime_diff | aprime_off",
+       title = "added variable plot of ppm_diff") +
+  theme_bw()
+```
+
+```{r minor-plot-aprime-ppm-coefplot}
+aprime_by_ppm %>%
+  mutate(model = map(model, ~broom::tidy(.))) %>%
+  select(-data) %>%
+  unnest(model) %>%
+  mutate(term = recode(term,
+                       `(Intercept)` = "Intercept",
+                       aprime_off_c = "A' OFF smoking",
+                       ppm_diff = "ON - OFF change in CO ppm")) %>%
+  ggplot(aes(x = estimate, y = fct_rev(term))) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_errorbarh(aes(xmin = estimate - 2*std.error, xmax = estimate + 2*std.error), height = 0) +
+  geom_point() +
+  facet_grid(probe ~ exptCond) +
+  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
+       y = "model term",
+       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
+  theme_bw()
+```
 
 ## model fittin
 
@@ -729,23 +787,33 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 03/18/2020: Fit the dummy model separately for each `exptCond * probe` condition
 
 ```{r, eval = FALSE}
-models2 <- tibble(name = c("full", "manip_check", "dummy_all", "dummy_art", "dummy_room", "rel_room"),
-                 has_valid = list(1L, 0:1, 1L, 1L, 1L, 1L),
-                 has_probe = list(c("art", "room"), c("art", "room"), c("art", "room"), "art", "room", "room"),
-                 has_exptCond = list(0:1, 0:1, 0:1, 0:1, 0:1, 1L),
-                 terms = list(c("corResp", "probe", "on_smoking", "exptCond"),
-                              c("corResp", "valid", "probe", "on_smoking", "exptCond"),
-                              c("corResp", "trial_type"),
-                              c("corResp", "trial_type"),
-                              c("corResp", "trial_type"),
-                              c("corResp", "on_smoking")),
-                 ranefs = c("(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
-                            "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)",
-                            "(1 + corResp * trial_type | subj_num)",
-                            "(1 + corResp * trial_type | subj_num)",
-                            "(1 + corResp * trial_type | subj_num)",
-                            "(1 + corResp * on_smoking | subj_num)")) %>%
-  mutate(data = map(has_valid, ~raw %>% filter(valid %in% .x)),
+models2 <- tibble(has_probe = c(rep(list(c("art", "room")), 3), as.list(rep(c("art", "room"), times = 3))),
+                  has_exptCond = c(rep(list(0:1), 3 + 2), as.list(rep(0:1, each = 2))),
+                  has_valid = c(list(1L, 0:1),
+                               as.list(rep(1L, 1 + 2 + 4))),
+                  name = c("full", "manip_check", "dummy_all",
+                           rep("dummy", 2),
+                           rep("sep", 4))) %>%
+  mutate(name = if_else(lengths(has_exptCond) == 1,
+                        map2_chr(name, has_exptCond, ~.y %>%
+                                   recode(`0` = "ctrl",
+                                          `1` = "rel") %>%
+                                   paste(.x, ., sep = "_", collapse = "_")),
+                        name),
+         name = if_else(lengths(has_probe) == 1,
+                        map2_chr(name, has_probe, ~paste(.x, .y, sep = "_", collapse = "_")),
+                        name),
+         terms = case_when(name == "full" ~ list(c("corResp", "probe", "on_smoking", "exptCond")),
+                           name == "manip_check" ~ list(c("corResp", "valid", "probe", "on_smoking", "exptCond")),
+                           startsWith(name, "dummy") ~ list(c("corResp", "trial_type")),
+                           startsWith(name, "sep") ~ list(c("corResp", "on_smoking")),
+                           TRUE ~ list(NA)),
+         ranefs = case_when(name == "full" ~ "(1 + (corResp + probe + exptCond + on_smoking)^2 | subj_num)",
+                            name == "manip_check" ~ "(1 + corResp + valid + probe + exptCond + on_smoking | subj_num)",
+                            startsWith(name, "dummy") ~ "(1 + corResp * trial_type | subj_num)",
+                            startsWith(name, "sep") ~ "(1 + corResp * on_smoking | subj_num)",
+                            TRUE ~ NA_character_),
+         data = map(has_valid, ~raw %>% filter(valid %in% .x)),
          data = map2(data, has_probe, ~.x %>% filter(probe %in% .y)),
          data = map2(data, has_exptCond, ~.x %>% filter(exptCond %in% .y)),
          data = map(data, ~.x %>%
@@ -770,16 +838,18 @@ models2 <- tibble(name = c("full", "manip_check", "dummy_all", "dummy_art", "dum
          txt_formula = case_when(
            name == "full" ~ paste0("(", txt_formula, ")^3"),
            name == "manip_check" ~ paste0(txt_formula, " + corResp:valid"),
-           startsWith(name, "dummy") | name == "rel_room" ~ paste0("(", txt_formula, ")^2")),
-         txt_formula = paste("resp ~", txt_formula, "+", ranefs),
-         model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
+           startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(", txt_formula, ")^2")),
+         txt_formula = paste("resp ~", txt_formula, "+", ranefs))
+
+models2 %<>%
+         mutate(model = map2(txt_formula, data, ~rstanarm::stan_glmer(as.formula(.x),
                                                                family = binomial(link = "logit"),
                                                                data = .y,
                                                                prior = rstanarm::cauchy(0, 5),
                                                                prior_intercept = rstanarm::cauchy(0, 5),
-                                                               # MIGHT just need this for the dummy_all one...?
+                                                               # MIGHT just need init_r = 1 for the dummy_all one...?
                                                                # and then rel_room needs iter = 3000
-                                                               init_r = 1)))
+                                                               iter = 3000)))
 
 
 save(models, file = "ignore/data_R/models_rstanarm.rda")
@@ -820,13 +890,23 @@ preplots_bysubj <- models %>%
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
                            mutate(aprime = sdt_aprime(rate_hit, rate_fa)))) %>%
-  select(name, predicted)
+  select(name, predicted) %>%
+  unnest(predicted) %>%
+  mutate(deleteme = str_split(name, "_"),
+         exptCond2 = map_chr(deleteme, ~if_else(length(.x) == 3, .x[2], .x[1])),
+         exptCond2 = recode(exptCond2, rel = "relational", ctrl = "control"),
+         probe2 = map_chr(deleteme, ~.x[length(.x)]),
+         exptCond = coalesce(exptCond, exptCond2),
+         probe = coalesce(probe, probe2),
+         valid = coalesce(valid, 1L)) %>%
+  select(-c(deleteme, exptCond2, probe2))
 
 preplots_fixef <- models %>%
   select(name, terms, data, model) %>%
   mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
          predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "resp_pred")),
-         predicted = map_if(predicted, !startsWith(name, "dummy"), ~.x %>%
+         predicted = map_if(predicted, !startsWith(name, "dummy"),
+                            ~.x %>%
                               mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
                               mutate_at(vars(one_of("probe")), ~recode(.x, `-0.5` = "art", `0.5` = "room")) %>%
                               mutate(corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
@@ -842,30 +922,26 @@ preplots_fixef <- models %>%
                            pivot_wider(names_from = corResp,
                                        values_from = resp_pred,
                                        names_prefix = "rate_") %>%
-                           mutate(aprime = sdt_aprime(rate_hit, rate_fa))),
-         predicted = map_if(predicted, name == "rel_room",
-                            ~.x %>%
-                              mutate(probe = "room",
-                                     exptCond = "relational"),
-                            .else = ~.x)) %>%
-  select(name, predicted)
+                           mutate(aprime = sdt_aprime(rate_hit, rate_fa)))) %>%
+  select(name, predicted) %>%
+  unnest(predicted) %>%
+  mutate(deleteme = str_split(name, "_"),
+         exptCond2 = map_chr(deleteme, ~if_else(length(.x) == 3, .x[2], .x[1])),
+         exptCond2 = recode(exptCond2, rel = "relational", ctrl = "control"),
+         probe2 = map_chr(deleteme, ~.x[length(.x)]),
+         exptCond = coalesce(exptCond, exptCond2),
+         probe = coalesce(probe, probe2),
+         valid = coalesce(valid, 1L)) %>%
+  select(-c(deleteme, exptCond2, probe2))
 
-save(preplots_params, preplots_bysubj, preplots_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
-```
-
-```{r}
-load("ignore/data_R/preplots_rstanarm.rda")
-```
-
-```{r}
 preplots_raw_bysubj <- preplots_bysubj %>%
   filter(name != "manip_check") %>%
   mutate(name = recode(name,
                        full = "2x2x2",
-                       dummy_art = "dummy_sep",
-                       dummy_room = "dummy_sep"),
+                       dummy_art = "dummy_byprobe",
+                       dummy_room = "dummy_byprobe"),
+         name = if_else(startsWith(name, "sep"), "sep", name),
          name = paste0("model_", name)) %>%
-  unnest(predicted) %>%
   bind_rows(sdt_metrics %>%
               select(subj_num, on_smoking, exptCond, probe = cue, rate_fa, rate_hit, aprime) %>%
               mutate(name = "raw"))
@@ -873,9 +949,9 @@ preplots_raw_bysubj <- preplots_bysubj %>%
 preplots_raw_fixef <- preplots_fixef %>%
   filter(name != "manip_check") %>%
   mutate(name = recode(name,
-                       dummy_art = "dummy_sep",
-                       dummy_room = "dummy_sep")) %>%
-  unnest(predicted) %>% 
+                       dummy_art = "dummy_byprobe",
+                       dummy_room = "dummy_byprobe"),
+         name = if_else(startsWith(name, "sep"), "sep", name)) %>%
   arrange(name, iteration, probe, exptCond, on_smoking) %>%
   group_by(name, iteration, probe, exptCond) %>%
   summarize(diff_rate_fa = diff(rate_fa),
@@ -899,8 +975,13 @@ preplots_raw_fixef <- preplots_fixef %>%
               summarize(raw_median_diff_smoking = median(diff_smoking),
                         raw_mean_diff_smoking = mean(diff_smoking)),
             by = c("probe", "exptCond", "metric_type"))
+
+save(preplots_params, preplots_bysubj, preplots_fixef, preplots_raw_bysubj, preplots_raw_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
 ```
 
+```{r}
+load("ignore/data_R/preplots_rstanarm.rda")
+```
 
 ## results graphin
 
@@ -941,6 +1022,7 @@ preplots_params %>%
 
 Based on at least the parameter estimates of the fixed effects, it looks like the model with the random effects isn't drastically different in median estimates of most of the fixed effects. Sure the standard errors are bigger, but I think I'm ok with this. As you'll see below, allowing more random effects reduces the effective regularization of single subject d', leaving more variability in place. I think we want this!
 
+
 ```{r}
 preplots_params %>%
   plot_params("manip_check")
@@ -953,7 +1035,7 @@ preplots_params %>%
 
 ```{r}
 preplots_params %>%
-  plot_params("rel_room")
+  plot_params("sep_rel_room")
 ```
 
 ### assessing model fit
@@ -979,6 +1061,7 @@ In general, I'm not too worried about discrepancies between the model-fit data a
 
 ```{r}
 preplots_raw_bysubj %>%
+  select(-valid) %>%
   nest(data = -name) %>%
   mutate(raw = data[name == "raw"]) %>%
   filter(name != "raw") %>%
