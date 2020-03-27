@@ -1,0 +1,159 @@
+---
+title: "report"
+author: "Monica Thieu"
+date: "3/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+load(here::here("ignore", "data_R", "raw.rda"))
+load(here::here("ignore", "data_R", "boots.rda"))
+load(here::here("ignore", "data_R","preplots_rstanarm.rda"))
+load(here::here("ignore", "data_R", "aprime_by_ppm.rda"))
+```
+
+# Da plotz
+
+```{r major-plot-aprime-ppm-resid-boot}
+aprime_by_ppm_boot %>%
+  select(iteration, exptCond, probe, data_raw) %>%
+  unnest(data_raw) %>%
+  group_by(exptCond, probe, obs, ppm_diff_resid, aprime_diff_resid, aprime_diff_fit) %>%
+  summarize(boot_median = median(predicted),
+            boot_q025 = quantile(predicted, .025),
+            boot_q975 = quantile(predicted, .975)) %>%
+  mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)) %>%
+  ggplot(aes(x = ppm_diff_resid, y = aprime_diff_resid, color = rel_room, fill = rel_room)) +
+  geom_point(alpha = 0.5) +
+  geom_ribbon(aes(ymin = boot_q025, ymax = boot_q975), color = FALSE, alpha = 0.3) +
+  geom_line(aes(y = aprime_diff_fit), size = 1) +
+  geom_text(aes(label = glue::glue("beta = {signif(estimate, 2)} +- boot SE = {round(std.error, 2)}")),
+            data = aprime_by_ppm %>%
+              mutate(coefs = map(model, broom::tidy)) %>%
+              select(-data, -model) %>%
+              unnest(coefs) %>%
+              filter(term == "ppm_diff") %>%
+              mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)),
+            x = 8, y = -0.5, hjust = 1) +
+  # geom_smooth(method = "lm", fill = "blue") +
+  facet_grid(probe ~ exptCond) +
+  guides(color = FALSE, fill = FALSE) +
+  labs(x = "ppm_diff | aprime_off",
+       y = "aprime_diff | aprime_off",
+       title = "added variable plot of ppm_diff") +
+  theme_bw()
+```
+
+```{r minor-plot-aprime-ppm-coefplot-boot}
+aprime_by_ppm_boot %>%
+  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+  select(iteration, exptCond, probe, coefs) %>%
+  unnest(coefs) %>%
+  mutate(term = recode_factor(term,
+                              `(Intercept)` = "Intercept",
+                              aprime_off_c = "A' OFF smoking",
+                              ppm_diff = "ON - OFF change in CO ppm")) %>%
+  group_by(exptCond, probe, term, estimate_raw) %>%
+  summarize(boot_median = median(estimate),
+            boot_q025 = quantile(estimate, .025),
+            boot_q25 = quantile(estimate, .25),
+            boot_q75 = quantile(estimate, .75),
+            boot_q975 = quantile(estimate, .975)) %>%
+  ggplot(aes(x = boot_median, y = "term")) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
+  geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
+  geom_point() +
+  geom_point(aes(x = estimate_raw), color = "hotpink") +
+  facet_grid(probe ~ exptCond + term, scales = "free_x") +
+  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
+       y = "model term",
+       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
+  theme_bw()
+```
+
+```{r minor-plot-aprime-ppm-coefplot-boot}
+aprime_by_ppm_boot %>%
+  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+  select(iteration, exptCond, probe, coefs) %>%
+  unnest(coefs) %>%
+  mutate(term = recode_factor(term,
+                              `(Intercept)` = "Intercept",
+                              aprime_off_c = "A' OFF smoking",
+                              ppm_diff = "ON - OFF change in CO ppm")) %>%
+  group_by(exptCond, probe, term, estimate_raw) %>%
+  summarize(boot_median = median(estimate),
+            boot_q025 = quantile(estimate, .025),
+            boot_q25 = quantile(estimate, .25),
+            boot_q75 = quantile(estimate, .75),
+            boot_q975 = quantile(estimate, .975)) %>%
+  ggplot(aes(x = boot_median, y = "term")) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
+  geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
+  geom_point() +
+  geom_point(aes(x = estimate_raw), color = "hotpink") +
+  facet_grid(term ~ exptCond + probe, scales = "free_x") +
+  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
+       y = "model term",
+       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
+  theme_bw()
+```
+
+```{r minor-plot-2x2x2-coefs}
+preplots_params %>%
+  filter(startsWith(name, "full")) %>%
+  unnest(iterations) %>%
+  mutate(term = recode_factor(term,
+                              intercept = "intercept",
+                              corResp = "memory",
+                              exptCond = "trial type",
+                              probe = "attention type",
+                              on_smoking = "smoking status",
+                              `corResp:exptCond` = "memory x trial type",
+                              `corResp:probe` = "memory x attention type",
+                              `corResp:on_smoking` = "memory x smoking status",
+                              `probe:exptCond` = "trial type x attention type",
+                              `on_smoking:exptCond` = "trial type x smoking status",
+                              `probe:on_smoking` = "attention type x smoking status")) %>%
+  group_by(term) %>%
+  summarize(est_median = median(estimate),
+            est_q025 = quantile(estimate, .025),
+            est_q25 = quantile(estimate, .25),
+            est_q75 = quantile(estimate, .75),
+            est_q975 = quantile(estimate, .975)) %>%
+  ggplot(aes(x = est_median, y = fct_rev(term))) +
+  geom_vline(xintercept = 0, linetype = 3, color = "purple") +
+  geom_errorbarh(aes(xmin = est_q025, xmax = est_q975), height = 0) +
+  geom_errorbarh(aes(xmin = est_q25, xmax = est_q75), size = 1, height = 0) +
+  geom_point() +
+  labs(title = "visual coefficients/SEs for 2x2x2 model") +
+  theme_bw()
+```
+
+```{r major-plot-nick}
+preplots_raw_bysubj %>%
+  filter(name == "raw") %>%
+  ggplot(aes(x = on_smoking, y = aprime)) +
+  geom_line(aes(group = subj_num), alpha = 0.1) +
+  geom_jitter(width = 0.1, alpha = 0.2) +
+  geom_line(aes(group = 1),
+            data = preplots_raw_bysubj %>%
+              filter(name == "model_2x2x2") %>%
+              group_by(on_smoking, exptCond, probe) %>%
+              summarize(aprime = median(aprime)),
+            size = 1.5,
+            alpha = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = 3) +
+  labs(x = "Smoking status",
+       y = "A'",
+       title = "Figure N",
+       subtitle = "putative cholinergic modulation of A'") +
+  facet_grid( ~ exptCond + probe) +
+  theme_bw()
+```
+
+# Da resultz
