@@ -17,6 +17,10 @@ load(here::here("ignore", "data_R", "aprime_by_ppm.rda"))
 
 # Da plotz
 
+03/27/2020: Redo the aprime ppm boot plot with un-adjusted, not the added variable plot, but keep the multiple regression boot stuff for text reporting. Also re-run the boots for more iterations to stabilize the standard error estimates
+
+FIX WHAT YOU HAVE IN THE GLUE CALL TO REPORT THE CORRECT STD ERROR
+
 ```{r major-plot-aprime-ppm-resid-boot}
 aprime_by_ppm_boot %>%
   select(iteration, exptCond, probe, data_raw) %>%
@@ -30,7 +34,7 @@ aprime_by_ppm_boot %>%
   geom_point(alpha = 0.5) +
   geom_ribbon(aes(ymin = boot_q025, ymax = boot_q975), color = FALSE, alpha = 0.3) +
   geom_line(aes(y = aprime_diff_fit), size = 1) +
-  geom_text(aes(label = glue::glue("beta = {signif(estimate, 2)} +- boot SE = {round(std.error, 2)}")),
+  geom_text(aes(label = glue::glue("beta = {signif(estimate, 3)} +- boot SE = {round(std.error, 4)}")),
             data = aprime_by_ppm %>%
               mutate(coefs = map(model, broom::tidy)) %>%
               select(-data, -model) %>%
@@ -47,33 +51,7 @@ aprime_by_ppm_boot %>%
   theme_bw()
 ```
 
-```{r minor-plot-aprime-ppm-coefplot-boot}
-aprime_by_ppm_boot %>%
-  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
-  select(iteration, exptCond, probe, coefs) %>%
-  unnest(coefs) %>%
-  mutate(term = recode_factor(term,
-                              `(Intercept)` = "Intercept",
-                              aprime_off_c = "A' OFF smoking",
-                              ppm_diff = "ON - OFF change in CO ppm")) %>%
-  group_by(exptCond, probe, term, estimate_raw) %>%
-  summarize(boot_median = median(estimate),
-            boot_q025 = quantile(estimate, .025),
-            boot_q25 = quantile(estimate, .25),
-            boot_q75 = quantile(estimate, .75),
-            boot_q975 = quantile(estimate, .975)) %>%
-  ggplot(aes(x = boot_median, y = "term")) +
-  geom_vline(xintercept = 0, linetype = 3) +
-  geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
-  geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
-  geom_point() +
-  geom_point(aes(x = estimate_raw), color = "hotpink") +
-  facet_grid(probe ~ exptCond + term, scales = "free_x") +
-  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
-       y = "model term",
-       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
-  theme_bw()
-```
+03/27/2020: Investigate this graph... what is up with the bootstrap error distributions not being centered on the raw values
 
 ```{r minor-plot-aprime-ppm-coefplot-boot}
 aprime_by_ppm_boot %>%
@@ -86,6 +64,7 @@ aprime_by_ppm_boot %>%
                               ppm_diff = "ON - OFF change in CO ppm")) %>%
   group_by(exptCond, probe, term, estimate_raw) %>%
   summarize(boot_median = median(estimate),
+            boot_mean = mean(estimate),
             boot_q025 = quantile(estimate, .025),
             boot_q25 = quantile(estimate, .25),
             boot_q75 = quantile(estimate, .75),
@@ -95,8 +74,9 @@ aprime_by_ppm_boot %>%
   geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
   geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
   geom_point() +
+  geom_point(aes(x = boot_mean), color = "purple") +
   geom_point(aes(x = estimate_raw), color = "hotpink") +
-  facet_grid(term ~ exptCond + probe, scales = "free_x") +
+  facet_grid(exptCond + probe ~ term, scales = "free_x") +
   labs(x = "coefficient (unit effect on ON-OFF A' difference)",
        y = "model term",
        title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
@@ -109,16 +89,16 @@ preplots_params %>%
   unnest(iterations) %>%
   mutate(term = recode_factor(term,
                               intercept = "intercept",
-                              corResp = "memory",
-                              exptCond = "trial type",
+                              corResp = "match present?",
+                              exptCond = "condition",
                               probe = "attention type",
                               on_smoking = "smoking status",
-                              `corResp:exptCond` = "memory x trial type",
-                              `corResp:probe` = "memory x attention type",
-                              `corResp:on_smoking` = "memory x smoking status",
-                              `probe:exptCond` = "trial type x attention type",
+                              `corResp:exptCond` = "match present? x condition",
+                              `corResp:probe` = "match present? x attention state",
+                              `corResp:on_smoking` = "match present? x smoking status",
+                              `probe:exptCond` = "trial type x attention state",
                               `on_smoking:exptCond` = "trial type x smoking status",
-                              `probe:on_smoking` = "attention type x smoking status")) %>%
+                              `probe:on_smoking` = "attention state x smoking status")) %>%
   group_by(term) %>%
   summarize(est_median = median(estimate),
             est_q025 = quantile(estimate, .025),
@@ -126,7 +106,7 @@ preplots_params %>%
             est_q75 = quantile(estimate, .75),
             est_q975 = quantile(estimate, .975)) %>%
   ggplot(aes(x = est_median, y = fct_rev(term))) +
-  geom_vline(xintercept = 0, linetype = 3, color = "purple") +
+  geom_vline(xintercept = 0, linetype = 3) +
   geom_errorbarh(aes(xmin = est_q025, xmax = est_q975), height = 0) +
   geom_errorbarh(aes(xmin = est_q25, xmax = est_q75), size = 1, height = 0) +
   geom_point() +
@@ -134,17 +114,21 @@ preplots_params %>%
   theme_bw()
 ```
 
+03/27/2020: use the mean for the below plot. And add a figure b for this one omitting the raw data with sensibly truncated axes
+
+red for control, blue for relational. lighter for art, darker for room. get Nick's illustrator CMYK codes for the conditions
+
 ```{r major-plot-nick}
 preplots_raw_bysubj %>%
   filter(name == "raw") %>%
-  ggplot(aes(x = on_smoking, y = aprime)) +
+  ggplot(aes(x = on_smoking, y = aprime, color = exptCond)) +
   geom_line(aes(group = subj_num), alpha = 0.1) +
   geom_jitter(width = 0.1, alpha = 0.2) +
   geom_line(aes(group = 1),
             data = preplots_raw_bysubj %>%
               filter(name == "model_2x2x2") %>%
               group_by(on_smoking, exptCond, probe) %>%
-              summarize(aprime = median(aprime)),
+              summarize(aprime = mean(aprime)),
             size = 1.5,
             alpha = 0.8) +
   geom_hline(yintercept = 0.5, linetype = 3) +
@@ -157,3 +141,33 @@ preplots_raw_bysubj %>%
 ```
 
 # Da resultz
+
+- **minor result**: Report valid > invalid A' from `manip_check`
+- **major result**: describe various ctrl/rel room/art things
+- **major result**: describe on/off smoking differences
+- **minor result**: describe converging results from alternate model fits
+- **minor result**: relational on-off room-art A' interaction? from dummy model (introduce said model also)
+- **major result**: A' by ppm diffs bootstrap biznaz
+
+```{r}
+coefs_manip_check <- preplots_params$iterations[[2]] %>%
+  group_by(term) %>%
+  summarize(est_mean = mean(estimate),
+            est_sd = sd(estimate)) %>%
+  mutate_if(is.numeric, signif, digits = 3)
+
+aprimes_manip_check <- preplots_fixef %>%
+  filter(name == "manip_check") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = valid, values_from = aprime, names_prefix = "aprime_") %>% 
+  mutate(aprime_diff = aprime_1 - aprime_0) %>%
+  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
+  mutate_if(is.numeric, signif, digits = 3)
+```
+
+A supplementary model estimating memory performance as a function of valid/invalid attention probe type confirmed that participants answered more accurately on valid probed trials than invalid probed trials, beta = `r coefs_manip_check$est_mean[coefs_manip_check$term == "corResp:valid"]`, s.e. = `r coefs_manip_check$est_sd[coefs_manip_check$term == "corResp:valid"]`, corresponding to an estimated A' difference of `r aprimes_manip_check$diff_mean` +- `r aprimes_manip_check$diff_sd`.
+
+```{r}
+
+```
+

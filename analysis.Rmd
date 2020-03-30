@@ -1197,19 +1197,19 @@ preplots_fixef %>%
 
 02/14/2020: Plot the betas concerning `corResp` in A'/hit/FA rate space for all of the relevant interactions to characterize what they mean. Or something.
 
+03/27/2020: Test again for a difference in on-off slope between relational art and relational room in the `dummy_all` model
+
 ```{r}
 var = "aprime"
 sym_var = sym(var)
 
 preplots_fixef %>%
   filter(name != "manip_check") %>%
-  unnest(predicted) %>%
   ggplot(aes(x = on_smoking, y = {{sym_var}}, color = interaction(exptCond, probe))) +
   geom_line(aes(group = interaction(iteration, exptCond, probe)), alpha = 0.01) +
   geom_line(aes(group = interaction(exptCond, probe)),
             data = preplots_fixef %>%
               filter(name != "manip_check") %>%
-              unnest(predicted) %>%
               group_by(name, on_smoking, probe, exptCond) %>%
               summarize(!!var := median({{sym_var}}))) +
   geom_line(aes(group = interaction(exptCond, probe)),
@@ -1219,6 +1219,7 @@ preplots_fixef %>%
               summarize(!!var := mean({{sym_var}})),
             linetype = 3,
             size = 1) +
+  lims(y = 0:1) +
   scale_color_manual(values = c("deeppink1", "deepskyblue1", "deeppink4", "deepskyblue4")) +
   facet_grid(~ name)
 ```
