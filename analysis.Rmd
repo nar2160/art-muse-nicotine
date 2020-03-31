@@ -740,6 +740,38 @@ aprime_by_ppm_boot %>%
   facet_grid( ~ exptCond + probe, scales = "free_x")
 ```
 
+```{r}
+aprime_by_ppm_boot %>%
+    mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+    select(iteration, exptCond, probe, coefs) %>%
+    unnest(coefs) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_vline(aes(xintercept = estimate_raw), linetype = 3, color = "hotpink") +
+  facet_grid(exptCond + probe ~ term, scales = "free_x") +
+  theme_bw()
+```
+
+```{r}
+boots_by_subj %>%
+  unnest(data) %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = c(ppm, aprime)) %>%
+  mutate(ppm_diff = ppm_on - ppm_off,
+         aprime_diff = aprime_on - aprime_off,
+         aprime_off_c = aprime_off - 0.5) %>%
+  ggplot(aes(x = aprime_off_c, y = aprime_diff, color = factor(iteration))) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, size = 0.5) +
+  geom_point(data = aprime_by_ppm %>% unnest(data), color = "black") +
+  geom_smooth(data = aprime_by_ppm %>% unnest(data),
+              method = "lm", formula = y ~ x, se = FALSE, size = 0.5, color = "black") +
+  guides(color = FALSE) +
+  facet_grid(probe ~ exptCond)
+```
+
+
 ```{r major-plot-aprime-ppm-resid}
 aprime_by_ppm %>%
   select(-model) %>%
