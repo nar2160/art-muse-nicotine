@@ -19,7 +19,7 @@ load(here::here("ignore", "data_R", "aprime_by_ppm.rda"))
 
 signif_digits <- 3L
 colors_exptCond <- c("#FF1926", "#00cccc")
-colors_exptCond_probe <- c("#ff1926", "#00cccc", "#ff9ea3", "#96f2f2")
+colors_exptCond_probe <- c("#00cccc", "#ff1926", "#96f2f2", "#ff9ea3")
 ```
 
 # Da plotz
@@ -27,6 +27,8 @@ colors_exptCond_probe <- c("#ff1926", "#00cccc", "#ff9ea3", "#96f2f2")
 03/27/2020: Redo the aprime ppm boot plot with un-adjusted, not the added variable plot, but keep the multiple regression boot stuff for text reporting. Also re-run the boots for more iterations to stabilize the standard error estimates
 
 Done: FIX WHAT YOU HAVE IN THE GLUE CALL TO REPORT THE CORRECT STD ERROR
+
+04/03/2020: Move forward with the unadjusted aprime x ppm plot, beautify it accordingly and possibly??? add significance visual highlight
 
 ```{r major-plot-aprime-ppm-boot}
 aprime_by_ppm_boot %>%
@@ -154,10 +156,12 @@ preplots_params %>%
 
 red for control, blue for relational. lighter for art, darker for room. get Nick's illustrator CMYK codes for the conditions
 
+04/03/2020: fix the color char vector to put the colors in the right order, also tweak opacity etc to get stuff to be darker
+
 ```{r major-plot-nick}
 preplots_raw_bysubj %>%
   filter(name == "raw") %>%
-  ggplot(aes(x = on_smoking, y = aprime, color = exptCond, fill = exptCond)) +
+  ggplot(aes(x = on_smoking, y = aprime, color = interaction(exptCond, probe), fill = interaction(exptCond, probe))) +
   geom_line(aes(group = subj_num), alpha = 0.08) +
   geom_jitter(width = 0.1, alpha = 0.2) +
   geom_ribbon(aes(y = aprime_mean, ymin = aprime_q025, ymax = aprime_q975, group = 1),
@@ -177,15 +181,18 @@ preplots_raw_bysubj %>%
             size = 1,
             alpha = 1) +
   geom_hline(yintercept = 0.5, linetype = 3) +
-  scale_color_manual(values = colors_exptCond) +
-  scale_fill_manual(values = colors_exptCond) +
-  labs(x = "Smoking status",
+  scale_color_manual(values = colors_exptCond_probe) +
+  scale_fill_manual(values = colors_exptCond_probe) +
+  labs(x = "Smoking session",
        y = "A'",
        title = "Figure N",
        subtitle = "putative cholinergic modulation of A'") +
+  guides(color = FALSE, fill = FALSE) +
   facet_grid( ~ exptCond + probe) +
   theme_bw()
 ```
+
+04/03/2020: Make another version of this plot with 95% ribbons instead of paired angel hair. Also tinker with the angel hair plot to make things more visible. Plus add manual color legend for dark vs light
 
 ```{r minor-plot-nick-truncated}
 preplots_fixef %>%
@@ -203,7 +210,7 @@ preplots_fixef %>%
             size = 1.5,
             alpha = 0.8) +
   scale_color_manual(values = colors_exptCond_probe) +
-  labs(x = "Smoking status",
+  labs(x = "Smoking session",
        y = "A'",
        title = "Figure Nb",
        subtitle = "putative cholinergic modulation of A'") +
@@ -220,7 +227,14 @@ preplots_fixef %>%
 1. **minor result**: relational on-off room-art A' interaction? from dummy model (introduce said model also)
 1. **major result**: A' by ppm diffs bootstrap biznaz
 
-```{r}
+04/03/2020:
+
+- Harmonize terminology with what Nick is reporting in the patient manuscript returned for response to review
+- report for all estimates, mean [q025, q975]
+- report RT for `manip_check` analysis also
+- generally, where appropriate, interleave RT results in with A' results. In general, do not break RT out by response accuracy, just by task conditions
+
+```{r, echo = FALSE}
 coefs <- preplots_params %>%
   unnest(iterations) %>%
   group_by(name, term) %>%
@@ -237,7 +251,7 @@ get_coefs <- function (model_name, model_term, statistic, these_coefs = coefs) {
 
 ## Report valid > invalid A' from `manip_check`
 
-```{r}
+```{r, echo = FALSE}
 aprimes_manip_check <- preplots_fixef %>%
   filter(name == "manip_check") %>%
   select(-starts_with("rate")) %>%
@@ -251,7 +265,7 @@ A supplementary model estimating working memory performance as a function of val
 
 ## describe various ctrl/rel room/art things
 
-```{r}
+```{r, echo = FALSE}
 aprimes_2x2x2_exptCond <- preplots_fixef %>%
   filter(name == "full") %>%
   select(-starts_with("rate")) %>%
@@ -279,7 +293,7 @@ aprimes_2x2x2_probe_exptCond <- preplots_fixef %>%
   mutate_if(is.numeric, signif, digits = signif_digits)
 ```
 
-```{r}
+```{r, echo = FALSE}
 errors <- preplots_raw_bysubj %>%
   select(-valid) %>%
   nest(data = -name) %>%
@@ -305,7 +319,7 @@ We did not find an analogous main effect of attentional state (art vs. room) on 
 
 ## describe on/off smoking differences
 
-```{r}
+```{r, echo = FALSE}
 aprimes_2x2x2_smoking <- preplots_fixef %>%
   filter(name == "full") %>%
   select(-starts_with("rate")) %>%
@@ -354,7 +368,7 @@ Given that all models with the same predictors on the same outcome are ultimatel
 
 ### relational on-off room-art A' interaction? from dummy model
 
-```{r}
+```{r, echo = FALSE}
 aprimes_dummy_smoking <- preplots_fixef %>%
   filter(name == "dummy_all") %>%
   select(-starts_with("rate")) %>%
