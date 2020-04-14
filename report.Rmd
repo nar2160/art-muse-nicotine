@@ -12,14 +12,28 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(magrittr)
+library(rlang)
 load(here::here("ignore", "data_R", "raw.rda"))
 load(here::here("ignore", "data_R", "boots.rda"))
 load(here::here("ignore", "data_R","preplots_rstanarm.rda"))
+load(here::here("ignore", "data_R","preplots_rt_rstanarm.rda"))
 load(here::here("ignore", "data_R", "aprime_by_ppm.rda"))
 
+this_theme <- function (...) {
+  
+  out <- theme_bw() +
+    theme(plot.title.position = "plot",
+          axis.title = element_text(size = rel(1.2)),
+          axis.text = element_text(size = rel(1)),
+          strip.text = element_text(size = rel(1))) +
+    theme(...)
+  
+  return (out)
+}
+
 signif_digits <- 3L
-colors_exptCond <- c("#FF1926", "#00cccc")
-colors_exptCond_probe <- c("#00cccc", "#ff1926", "#96f2f2", "#ff9ea3")
+colors_exptCond <- c("#FF1926", "#008a8a")
+colors_exptCond_probe <- c("#ff1926", "#008a8a", "#ff9ea3",  "#3acfcf")
 ```
 
 # Da plotz
@@ -31,24 +45,42 @@ Done: FIX WHAT YOU HAVE IN THE GLUE CALL TO REPORT THE CORRECT STD ERROR
 04/03/2020: Move forward with the unadjusted aprime x ppm plot, beautify it accordingly and possibly??? add significance visual highlight
 
 ```{r major-plot-aprime-ppm-boot}
-aprime_by_ppm_boot %>%
+x <- aprime_by_ppm_boot %>%
   select(iteration, exptCond, probe, data_raw) %>%
   unnest(data_raw) %>%
+  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
   group_by(exptCond, probe, obs, ppm_diff, aprime_diff, aprime_diff_fit) %>%
   summarize(boot_median = median(predicted),
             boot_q025 = quantile(predicted, .025),
             boot_q975 = quantile(predicted, .975)) %>%
-  mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)) %>%
-  ggplot(aes(x = ppm_diff, y = aprime_diff, color = rel_room, fill = rel_room)) +
+  mutate(rel_room = if_else(exptCond == "similar" & probe == "room", TRUE, FALSE)) %>%
+  ggplot(aes(x = ppm_diff, y = aprime_diff,
+             color = interaction(exptCond, probe),
+             fill = interaction(exptCond, probe))) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", formula = y ~ x, size = 1, alpha = 0.3) +
-  # geom_smooth(method = "lm", fill = "blue") +
+  geom_text(aes(label = this_label),
+            data = crossing(ppm_diff = 5, aprime_diff = -.18,
+                            exptCond = c("identical", "similar"), probe = c("art", "room")) %>%
+              mutate(this_label = if_else(exptCond == "similar" & probe == "room", "*", "")),
+            size = 10, color = "black") +
+  scale_color_manual(values = colors_exptCond_probe) +
+  scale_fill_manual(values = colors_exptCond_probe) +
   facet_grid(probe ~ exptCond) +
   guides(color = FALSE, fill = FALSE) +
-  labs(x = "ppm_diff",
-       y = "aprime_diff",
+  labs(x = "CO ppm ON - CO ppm OFF smoking",
+       y = "A' ON - A' OFF smoking",
        title = "unadjusted plot of ppm_diff") +
-  theme_bw()
+  this_theme()
+
+x
+
+x %>%
+  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm.png",
+       plot = .,
+       device = "png",
+       width = 6,
+       height = 6)
 ```
 
 ```{r minor-plot-aprime-ppm-resid-boot}
@@ -122,7 +154,7 @@ aprime_by_ppm_boot %>%
 ```
 
 ```{r minor-plot-2x2x2-coefs}
-preplots_params %>%
+x <- preplots_params %>%
   filter(startsWith(name, "full")) %>%
   unnest(iterations) %>%
   mutate(term = recode_factor(term,
@@ -132,11 +164,15 @@ preplots_params %>%
                               probe = "attention type",
                               on_smoking = "smoking status",
                               `corResp:exptCond` = "match present? x condition",
-                              `corResp:probe` = "match present? x attention state",
-                              `corResp:on_smoking` = "match present? x smoking status",
-                              `probe:exptCond` = "trial type x attention state",
-                              `on_smoking:exptCond` = "trial type x smoking status",
-                              `probe:on_smoking` = "attention state x smoking status")) %>%
+                              `corResp:probe` = "match present? x attention",
+                              `corResp:on_smoking` = "match present? x smoking",
+                              `probe:exptCond` = " condition x attention",
+                              `on_smoking:exptCond` = "condition x smoking",
+                              `probe:on_smoking` = "attention x smoking",
+                              `corResp:probe:exptCond` = "match present? x condition x attention",
+                              `corResp:on_smoking:exptCond` = "match present? x condition x smoking",
+                              `corResp:probe:on_smoking` = "match present? x attention x smoking",
+                              `probe:on_smoking:exptCond` = "condition x attention x smoking")) %>%
   group_by(term) %>%
   summarize(est_median = median(estimate),
             est_q025 = quantile(estimate, .025),
@@ -148,8 +184,20 @@ preplots_params %>%
   geom_errorbarh(aes(xmin = est_q025, xmax = est_q975), height = 0) +
   geom_errorbarh(aes(xmin = est_q25, xmax = est_q75), size = 1, height = 0) +
   geom_point() +
-  labs(title = "visual coefficients/SEs for 2x2x2 model") +
-  theme_bw()
+  labs(x = "coefficient +- posterior interval", y = NULL,
+       title = "visual coefficients/SEs for 2x2x2 model",
+       subtitle = "thick error bars: 50% PI; thin error bars: 95% PI") +
+  this_theme(plot.title.position = "panel")
+
+x
+
+x %>%
+  ggsave("ignore/figures/minor_plot_2x2x2_coefs.png",
+         plot = .,
+         device = "png",
+         width = 7,
+         height = 4.5,
+         units = "in")
 ```
 
 03/27/2020: use the mean for the below plot. And add a figure b for this one omitting the raw data with sensibly truncated axes
@@ -159,14 +207,16 @@ red for control, blue for relational. lighter for art, darker for room. get Nick
 04/03/2020: fix the color char vector to put the colors in the right order, also tweak opacity etc to get stuff to be darker
 
 ```{r major-plot-nick}
-preplots_raw_bysubj %>%
+x <- preplots_raw_bysubj %>%
   filter(name == "raw") %>%
+  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
   ggplot(aes(x = on_smoking, y = aprime, color = interaction(exptCond, probe), fill = interaction(exptCond, probe))) +
-  geom_line(aes(group = subj_num), alpha = 0.08) +
+  geom_line(aes(group = subj_num), alpha = 0.1) +
   geom_jitter(width = 0.1, alpha = 0.2) +
   geom_ribbon(aes(y = aprime_mean, ymin = aprime_q025, ymax = aprime_q975, group = 1),
               data = preplots_fixef %>%
               filter(name == "full") %>%
+                mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
               group_by(on_smoking, exptCond, probe) %>%
               summarize(aprime_mean = mean(aprime),
                         aprime_q025 = quantile(aprime, .025),
@@ -176,6 +226,7 @@ preplots_raw_bysubj %>%
   geom_line(aes(group = 1),
             data = preplots_fixef %>%
               filter(name == "full") %>%
+              mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
               group_by(on_smoking, exptCond, probe) %>%
               summarize(aprime = mean(aprime)),
             size = 1,
@@ -189,7 +240,16 @@ preplots_raw_bysubj %>%
        subtitle = "putative cholinergic modulation of A'") +
   guides(color = FALSE, fill = FALSE) +
   facet_grid( ~ exptCond + probe) +
-  theme_bw()
+  this_theme()
+
+x
+
+x %>%
+  ggsave(filename = "ignore/figures/major_plot_nick.png",
+       plot = .,
+       device = "png",
+       width = 7,
+       height = 4.5)
 ```
 
 04/03/2020: Make another version of this plot with 95% ribbons instead of paired angel hair. Also tinker with the angel hair plot to make things more visible. Plus add manual color legend for dark vs light
@@ -200,11 +260,13 @@ preplots_fixef %>%
   nest(data = -iteration) %>%
   sample_n(300) %>%
   unnest(data) %>%
+  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
   ggplot(aes(x = on_smoking, y = aprime, color = interaction(exptCond, probe))) +
   geom_line(aes(group = interaction(iteration, probe)), alpha = 0.05) +
   geom_line(aes(group = probe),
             data = preplots_fixef %>%
               filter(name == "full") %>%
+              mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
               group_by(on_smoking, exptCond, probe) %>%
               summarize(aprime = mean(aprime)),
             size = 1.5,
@@ -215,7 +277,52 @@ preplots_fixef %>%
        title = "Figure Nb",
        subtitle = "putative cholinergic modulation of A'") +
   facet_grid( ~ exptCond) +
-  theme_bw()
+  this_theme()
+```
+
+```{r minor-plot-nick-truncated-ribbon}
+x <- preplots_fixef %>%
+  filter(name == "full") %>%
+  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
+  group_by(on_smoking, exptCond, probe) %>%
+              summarize(aprime_mean = mean(aprime),
+                        aprime_q025 = quantile(aprime, .025),
+                        aprime_q975 = quantile(aprime, .975)) %>%
+  ggplot(aes(x = on_smoking, y = aprime_mean,
+             color = interaction(exptCond, probe),
+             fill = interaction(exptCond, probe))) +
+  geom_ribbon(aes(ymin = aprime_q025, ymax = aprime_q975, group = probe),
+              linetype = 0,
+              alpha = 0.25) +
+  geom_line(aes(group = probe),
+            size = 1.5,
+            alpha = 0.8) +
+  geom_text(aes(label = probe),
+            data = crossing(on_smoking = 1.5,
+                            exptCond = c("identical", "similar"), probe = c("art", "room")) %>%
+              mutate(aprime_mean = case_when(exptCond == "identical" & probe == "room" ~ .88,
+                                             exptCond == "identical" & probe == "art" ~ .86,
+                                             exptCond == "similar" & probe == "room" ~ .9,
+                                             exptCond == "similar" & probe == "art" ~ .92)),
+            size = 6) +
+  scale_color_manual(values = colors_exptCond_probe) +
+  scale_fill_manual(values = colors_exptCond_probe) +
+  guides(color = FALSE, fill = FALSE) +
+  labs(x = "Smoking session",
+       y = "A'",
+       title = "Figure Nb",
+       subtitle = "putative cholinergic modulation of A'") +
+  facet_grid( ~ exptCond) +
+  this_theme()
+
+x
+
+x %>%
+  ggsave(filename = "ignore/figures/minor_plot_nick_truncated.png",
+       plot = .,
+       device = "png",
+       width = 5,
+       height = 4)
 ```
 
 # Da resultz
@@ -235,21 +342,54 @@ preplots_fixef %>%
 - generally, where appropriate, interleave RT results in with A' results. In general, do not break RT out by response accuracy, just by task conditions
 
 ```{r, echo = FALSE}
+summarize_report <- function (data, col, ..., stat_name = "", unit_name = "", digs = signif_digits) {
+  if (unit_name != "") unit_name %<>% paste0(" ", .)
+  glue_in = if_else(stat_name != "",
+                    "{stat_name} = {a}{unit_name}, 95% CI [{b}, {c}]",
+                    "{a}{unit_name}, 95% CI [{b}, {c}]")
+  
+  col_chr = as_name(enexpr(col))
+  group_cols = enexprs(...)
+  
+  data %<>%
+    select(iteration, !!!group_cols, starts_with(col_chr)) %>%
+    pivot_longer(cols = starts_with(col_chr),
+                 names_to = "metric_type",
+                 values_to = "value",
+                 names_prefix = glue::glue("{col_chr}_"))
+  
+  if (!is.null(group_cols)) {
+    data %<>% group_by(!!!group_cols, metric_type)
+  } else {
+    data %<>% group_by(metric_type)
+  }
+  data %<>%
+    summarize(avg = mean(value),
+              q025 = quantile(value, .025),
+              q975 = quantile(value, .975)) %>% 
+    mutate_at(c("avg", "q025", "q975"), signif, digits = digs) %>%
+    mutate(txt_apa = pmap_chr(list(avg, q025, q975),
+                              function (a, b, c) {glue::glue(glue_in)}
+    )
+    )
+  
+  return (data)
+}
+
 coefs <- preplots_params %>%
   unnest(iterations) %>%
-  group_by(name, term) %>%
-  summarize(est_mean = mean(estimate),
-            est_sd = sd(estimate)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
+  summarize_report(estimate, name, term, stat_name = "beta")
 
-get_coefs <- function (model_name, model_term, statistic, these_coefs = coefs) {
+coefs_rt <- preplots_rt_params %>%
+  unnest(iterations) %>%
+  summarize_report(estimate, name, term, stat_name = "beta")
+
+get_coefs <- function (model_name, model_term, these_coefs = coefs) {
   these_coefs %>%
     filter(name == model_name, term == model_term) %>%
-    pull(!!statistic)
+    pull(txt_apa)
 }
 ```
-
-## Report valid > invalid A' from `manip_check`
 
 ```{r, echo = FALSE}
 aprimes_manip_check <- preplots_fixef %>%
@@ -257,13 +397,18 @@ aprimes_manip_check <- preplots_fixef %>%
   select(-starts_with("rate")) %>%
   pivot_wider(names_from = valid, values_from = aprime, names_prefix = "aprime_") %>% 
   mutate(aprime_diff = aprime_1 - aprime_0) %>%
-  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
+  summarize_report(aprime_diff, stat_name = "estimated A' difference")
+
+rts_manip_check <- preplots_rt_fixef %>%
+  filter(name == "manip_check") %>%
+  pivot_wider(names_from = valid, values_from = ends_with("rt_pred")) %>% 
+  mutate(rt_diff = rt_pred_1 - rt_pred_0) %>%
+  summarize_report(rt_diff, stat_name = "estimated RT difference", unit_name = "msec")
 ```
 
-A supplementary model estimating working memory performance as a function of valid/invalid attention probe type confirmed that participants answered more accurately on valid probed trials than invalid probed trials, beta = `r get_coefs("manip_check", "corResp:valid", "est_mean")`, s.e. = `r get_coefs("manip_check", "corResp:valid", "est_sd")`, corresponding to an estimated A' difference of `r aprimes_manip_check$diff_mean` +- `r aprimes_manip_check$diff_sd`.
+_Valid vs. Invalid Trials._ We first examined whether our attentional manipulation was successful by comparing performance on valid vs. invalid trials. If attention is effectively engaged by the cue at the beginning of the trial (i.e., ‘ART’ or ‘ROOM’), then performance should be more accurate and faster when the probe matches the cue (i.e., valid trials) than when it does not (i.e., invalid trials; Posner, 1980). These analyses confirmed that participants were more accurate on valid vs. invalid trials (`r get_coefs("manip_check", "corResp:valid")`; `r aprimes_manip_check$txt_apa`). Furthermore, an analysis of log-transformed response times (RTs) confirmed that participants were faster on valid vs. invalid trials (`r get_coefs("manip_check", "valid", coefs_rt)`; `r rts_manip_check$txt_apa`).
 
-## describe various ctrl/rel room/art things
+Taken together, these results suggest that attention was effectively engaged by the cue at the beginning of the trial: Participants were more accurate and faster on valid vs. invalid trials. Having verified that participants modulated their attention based on trial instructions, we next focus analyses on valid trials.
 
 ```{r, echo = FALSE}
 aprimes_2x2x2_exptCond <- preplots_fixef %>%
@@ -271,16 +416,29 @@ aprimes_2x2x2_exptCond <- preplots_fixef %>%
   select(-starts_with("rate")) %>%
   pivot_wider(names_from = exptCond, values_from = aprime) %>%
   mutate(aprime_diff = relational - control) %>%
-  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
+  summarize_report(aprime_diff)
+
+rts_2x2x2_exptCond <- preplots_rt_fixef %>%
+  filter(name == "full") %>%
+  select(-log_rt_pred) %>%
+  pivot_wider(names_from = exptCond, values_from = rt_pred) %>% 
+  mutate(rt_diff = relational - control) %>%
+  summarize_report(rt_diff,
+                   stat_name = "estimated log-RT difference", unit_name = "msec")
 
 aprimes_2x2x2_probe <- preplots_fixef %>%
   filter(name == "full") %>%
   select(-starts_with("rate")) %>%
   pivot_wider(names_from = probe, values_from = aprime) %>%
   mutate(aprime_diff = room - art) %>%
-  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
+  summarize_report(aprime_diff, stat_name = "estimated A' difference")
+
+rts_2x2x2_probe <- preplots_rt_fixef %>%
+  filter(name == "full") %>%
+  select(-log_rt_pred) %>%
+  pivot_wider(names_from = probe, values_from = rt_pred) %>% 
+  mutate(rt_diff = room - art) %>%
+  summarize_report(rt_diff, stat_name = "estimated RT difference", unit_name = "msec")
 
 aprimes_2x2x2_probe_exptCond <- preplots_fixef %>%
   filter(name == "full") %>%
@@ -289,9 +447,120 @@ aprimes_2x2x2_probe_exptCond <- preplots_fixef %>%
   mutate(aprime_diff_ctrl = control_room - control_art,
          aprime_diff_rel = relational_room - relational_art,
          aprime_diff_probe_exptCond = aprime_diff_rel - aprime_diff_ctrl) %>%
-  summarize_at(vars(starts_with("aprime_diff")), list(mean = mean, sd = sd)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
+  summarize_report(aprime_diff, stat_name = "estimated A' difference")
+
+rts_2x2x2_probe_exptCond <- preplots_rt_fixef %>%
+  filter(name == "full") %>%
+  select(-log_rt_pred) %>%
+  pivot_wider(names_from = c(exptCond, probe), values_from = rt_pred) %>% 
+  mutate(rt_diff_ctrl = control_room - control_art,
+         rt_diff_rel = relational_room - relational_art,
+         rt_diff_probe_exptCond = rt_diff_rel - rt_diff_ctrl) %>%
+  summarize_report(rt_diff, stat_name = "estimated RT difference", unit_name = "msec")
 ```
+
+**Art vs. Room and Identical vs. Similar Trials.** We next examined how individuals performed across conditions (identical vs. similar trials) and attentional states (art vs. room) in a Bayesian mixed model predicting accuracy as a function of identical vs. similar condition, art vs. room attention type, and on vs. off smoking session. As expected, A’ was substantially higher on identical vs. similar trials, as indexed by a main effect of condition (`r get_coefs("full", "corResp:exptCond")`; estimated A' difference = `r -aprimes_2x2x2_exptCond$avg`, 95% CI [`r -aprimes_2x2x2_exptCond$q975`, `r -aprimes_2x2x2_exptCond$q025`]). We did not find a comparable main effect of condition on log-RTs (`r get_coefs("full", "exptCond", coefs_rt)`; `r rts_2x2x2_exptCond$txt_apa`).
+
+In contrast, performance was not meaningfully different between art and room attentional states, neither for A’ (`r get_coefs("full", "corResp:probe")`; `r aprimes_2x2x2_probe$txt_apa`) nor for log-RTs (`r get_coefs("full", "corResp:probe", coefs_rt)`; `r rts_2x2x2_probe$txt_apa`).
+
+However, for A’, there was an interaction between condition and attentional state, `r get_coefs("full", "corResp:probe:exptCond")`. A’ on identical trials was higher for room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "ctrl") %>% pull(txt_apa)`), but A’ on similar trials did not meaningfully differ between room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "rel") %>% pull(txt_apa)`). There was no such interaction for log-RTs, (`r get_coefs("full", "probe:exptCond", coefs_rt)`; HOW TO REPORT THIS STAT IN PARALLEL?).
+
+
+
+
+## describe on/off smoking differences
+
+```{r, echo = FALSE}
+aprimes_2x2x2_smoking <- preplots_fixef %>%
+  filter(name == "full") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = aprime) %>%
+  mutate(aprime_diff = on - off) %>%
+  summarize_report(aprime_diff)
+
+aprimes_2x2x2_smoking_simple <- preplots_fixef %>%
+  filter(name == "full") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = aprime) %>%
+  mutate(aprime_diff = on - off) %>%
+  summarize_report(aprime_diff, exptCond, probe)
+
+aprimes_2x2x2_smoking_exptCond <- preplots_fixef %>%
+  filter(name == "full") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = c(on_smoking, exptCond), values_from = aprime) %>%
+  mutate(aprime_diff_ctrl = on_control - off_control,
+         aprime_diff_rel = on_relational - off_relational,
+         aprime_diff_smoking_exptCond = aprime_diff_rel - aprime_diff_ctrl) %>%
+  summarize_report(aprime_diff)
+
+aprimes_2x2x2_smoking_probe <- preplots_fixef %>%
+  filter(name == "full") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = c(on_smoking, probe), values_from = aprime) %>%
+  mutate(aprime_diff_room = on_room - off_room,
+         aprime_diff_art = on_art - off_art,
+         aprime_diff_smoking_probe = aprime_diff_room - aprime_diff_art) %>%
+  summarize_report(aprime_diff, exptCond)
+```
+
+We did not find a main effect of smoking session on A', `r get_coefs("full", "corResp:on_smoking")`, suggesting that across trial types, A' was not consistently higher during the ON session than the OFF session. More specifically, we estimated an ON - OFF smoking A' difference of `r aprimes_2x2x2_smoking$txt_apa`.
+
+We also did not find a main effect of smoking session on RT, `r get_coefs("full", "on_smoking", coefs_rt)`.
+
+## describe converging results from alternate model fits
+
+We used the model with main effects and interactions of match status, probe similarity type, attentional state, and smoking session, as the relationships between sub-conditions implied by the model align best with a theoretical model proposing that some consistent construct underlies performance on, e.g., all similar match trials relative to all identical match trials. However, any model specification carries with it particular side effects, which may be advantages or limitations depending on the context. In this case, by  using interaction terms to match our model to the factorial design of the task, estimates are assumed to be more similar for factorial conditions sharing a level. For example, the estimates for similar art match trials OFF smoking are regularized to be closer to estimates for other similar match trials, other art match trials, and other OFF smoking trials. Such a model allows us to make true factorial inferences, arguably the most powerful, about the effects of our manipulations.
+
+However, the constraining effects of a factorial model specification may cause the model to _underestimate_ the magnitude of a simple effect. For example, if there were a true underlying ON-smoking improvement in working memory accuracy, but only for one of the 2 x 2 factorial levels of probe similarity type x attentional state, the absence of the simple effect in three of the four factorial levels would cause the model to estimate the magnitude of the simple effect in the fourth level too conservatively, thus reducing our ability to detect such an effect.
+
+An alternative model specification that mitigates this concern is a dummy-coded model. In a dummy-coded model, each factorial level is instead treated as an independent level of a single variable. As such, simple effects are not constrained by the model to be similar for similar factorial levels, allowing the model to be more liberal in estimating an effect that only appears in a single level. For this reason, we estimated a supplementary model with two predictors: one predictor for match status, and one predictor for task condition with 8 levels, one for each factorial combination of smoking session, probe similarity type, and attentional state (2 x 2 x 2 = 8), to probe for simple effects.
+
+To further reduce factorial model constraints, we estimated a final set of four supplementary models, each with match status and smoking session as predictors. Each model was estimated on a different subset of data for each of the 2 x 2 = 4 factorial levels of probe similarity type x attentional state. These models are the most liberal in allowing the estimated effect of smoking session on working memory accuracy to differ across levels of probe similarity and attentional state.
+
+Given that all models with the same predictors on the same outcome are ultimately only different flavors of quantifying the same underlying patterns present in the data, alternative model specifications should yield qualitatively similar estimates as our primary model. 
+
+```{r, echo = FALSE}
+# relational on-off room-art A' interaction? from dummy model
+# NOT REPORTING
+aprimes_dummy_smoking <- preplots_fixef %>%
+  filter(name == "dummy_all") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = on_smoking, values_from = aprime) %>%
+  mutate(aprime_diff = on - off) %>%
+  summarize_report(aprime_diff, exptCond, probe)
+
+aprimes_dummy_smoking_probe <- preplots_fixef %>%
+  filter(name == "dummy_all") %>%
+  select(-starts_with("rate")) %>%
+  pivot_wider(names_from = c(on_smoking, probe), values_from = aprime) %>%
+  mutate(aprime_diff_room = on_room - off_room,
+         aprime_diff_art = on_art - off_art,
+         aprime_diff_smoking_probe = aprime_diff_room - aprime_diff_art) %>%
+  summarize_report(aprime_diff, exptCond)
+```
+
+## A' diff by ppm diff
+
+```{r, echo = FALSE}
+coefs_aprime_by_ppm <- aprime_by_ppm_boot %>%
+  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+  select(iteration, exptCond, probe, coefs) %>%
+  unnest(coefs) %>%
+  rename(raw = "estimate_raw") %>%
+  summarize_report(estimate, exptCond, probe, term, raw)
+```
+
+
+04/10/2020 just Monica: Move the first paragraph of this section to methods?
+
+To expand upon our primary analyses treating smoking session as a binary variable, we leveraged our carbon monoxide parts per million measurements to investigate possible dose-dependent effects of smoking nicotine on A' in various task conditions. To this end, we ran four independent, between-subjects linear regressions, one each for the four factorial task levels of condition x attention type. Each regression predicted each participant's A' difference ON - OFF smoking in that task condition as a function of their CO ppm difference ON - OFF smoking, with a nuisance regressor of each participant's "baseline" A' OFF smoking, to adjust for possible regression to the mean.
+
+We found that CO ppm difference ON - OFF smoking modestly positively predicted A' difference ON - OFF smoking, beta = `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room", term == "ppm_diff") %>% pull(raw)`, hierarchical bootstrapped 95% CI [`r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room", term == "ppm_diff") %>% pull(q025)`, `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room", term == "ppm_diff") %>% pull(q975)`], such that a CO increase of 1 ppm from off to on smoking predicted a `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room", term == "ppm_diff") %>% pull(raw)` increase in A' from off to on smoking. Post-hoc visual inspection reveals that this effect may be driven by participants with minimal on-smoking ppm increases being more likely to show a decrease in A' from off to on smoking.
+
+### model fit
+
+Should be moved to the statistical methods section but the code will stay here for now just in case
 
 ```{r, echo = FALSE}
 errors <- preplots_raw_bysubj %>%
@@ -311,86 +580,4 @@ errors <- preplots_raw_bysubj %>%
   pivot_longer(cols = c(rmse, mae), names_to = "error_type", values_to = "error")
 ```
 
-To assess model fit and validate subsequent inferences from the model, we used the model to generate each subject's predicted A' in each task condition, and calculated the errors between predicted A' and raw A' for each subject x condition that the model. We examined median absolute error, as median absolute error does not up-weight extremely large errors, as does root-mean-squared error. Median absolute error was below 0.05 A' units across subjects in seven of eight factorial task conditions.
-
-We found a sizeable main effect of probe similarity (identical vs. similar) on working memory accuracy, beta = `r get_coefs("full", "corResp:exptCond", "est_mean")`, s.e. = `r get_coefs("full", "corResp:exptCond", "est_sd")`, such that A' was estimated to be `r -aprimes_2x2x2_exptCond$diff_mean` +- `r aprimes_2x2x2_exptCond$diff_sd` units higher for identical match trials than similar match trials.
-
-We did not find an analogous main effect of attentional state (art vs. room) on working memory accuracy, beta = `r get_coefs("full", "corResp:probe", "est_mean")`, s.e. = `r get_coefs("full", "corResp:probe", "est_sd")`, indicating that across probe similarity type, A' was not meaningfully different between art match and room match trials. However, we found an interaction between probe similarity type and attentional state on accuracy, beta = `r get_coefs("full", "corResp:probe:exptCond", "est_mean")`, s.e. = `r get_coefs("full", "corResp:probe:exptCond", "est_sd")`. More specifically, the direction of the interaction indicated that A' for identical room match trials was higher than A' for identical art match trials, `r aprimes_2x2x2_probe_exptCond$aprime_diff_ctrl_mean` +- `r aprimes_2x2x2_probe_exptCond$aprime_diff_ctrl_sd`, but that A' did not meaningfully differ between similar room and similar art match trials, `r aprimes_2x2x2_probe_exptCond$aprime_diff_rel_mean` +- `r aprimes_2x2x2_probe_exptCond$aprime_diff_rel_sd`. `r aprimes_2x2x2_probe_exptCond$aprime_diff_probe_exptCond_mean` +- `r aprimes_2x2x2_probe_exptCond$aprime_diff_probe_exptCond_sd` 
-
-## describe on/off smoking differences
-
-```{r, echo = FALSE}
-aprimes_2x2x2_smoking <- preplots_fixef %>%
-  filter(name == "full") %>%
-  select(-starts_with("rate")) %>%
-  pivot_wider(names_from = on_smoking, values_from = aprime) %>%
-  mutate(aprime_diff = on - off) %>%
-  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
-
-aprimes_2x2x2_smoking_exptCond <- preplots_fixef %>%
-  filter(name == "full") %>%
-  select(-starts_with("rate")) %>%
-  pivot_wider(names_from = c(on_smoking, exptCond), values_from = aprime) %>%
-  mutate(aprime_diff_ctrl = on_control - off_control,
-         aprime_diff_rel = on_relational - off_relational,
-         aprime_diff_smoking_exptCond = aprime_diff_rel - aprime_diff_ctrl) %>%
-  summarize_at(vars(starts_with("aprime_diff")), list(mean = mean, sd = sd)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
-
-aprimes_2x2x2_smoking_probe <- preplots_fixef %>%
-  filter(name == "full") %>%
-  select(-starts_with("rate")) %>%
-  pivot_wider(names_from = c(on_smoking, probe), values_from = aprime) %>%
-  mutate(aprime_diff_room = on_room - off_room,
-         aprime_diff_art = on_art - off_art,
-         aprime_diff_smoking_probe = aprime_diff_room - aprime_diff_art) %>%
-  group_by(exptCond) %>%
-  summarize_at(vars(starts_with("aprime_diff")), list(mean = mean, sd = sd)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
-```
-
-We did not find a main effect of smoking session on working memory accuracy, beta = `r get_coefs("full", "corResp:on_smoking", "est_mean")`, s.e. = `r get_coefs("full", "corResp:on_smoking", "est_sd")`, suggesting that across trial types, working memory accuracy was not consistently higher during the ON session than the OFF session. REMOVE?: More specifically, we estimated that ON smoking A' was `r aprimes_2x2x2_smoking$diff_mean` +- `r aprimes_2x2x2_smoking$diff_sd` units higher than OFF smoking A'.
-
-REMOVE?: We also found a marginal interaction of smoking session and probe similarity type on working memory accuracy, beta = `r get_coefs("full", "corResp:on_smoking:exptCond", "est_mean")`, s.e. = `r get_coefs("full", "corResp:on_smoking:exptCond", "est_sd")`. More specifically, the direction of the interaction indicated that A' for identical match trials ON smoking was ??? than A' for identical match trials OFF smoking, `r aprimes_2x2x2_smoking_exptCond$aprime_diff_ctrl_mean` +- `r aprimes_2x2x2_smoking_exptCond$aprime_diff_ctrl_sd`, but that A' ??? between similar ON and similar OFF match trials, `r aprimes_2x2x2_smoking_exptCond$aprime_diff_rel_mean` +- `r aprimes_2x2x2_smoking_exptCond$aprime_diff_rel_sd`. Actual interaction A' difference: `r aprimes_2x2x2_smoking_exptCond$aprime_diff_smoking_exptCond_mean` +- `r aprimes_2x2x2_smoking_exptCond$aprime_diff_smoking_exptCond_sd`.
-
-## describe converging results from alternate model fits
-
-We used the model with main effects and interactions of match status, probe similarity type, attentional state, and smoking session, as the relationships between sub-conditions implied by the model align best with a theoretical model proposing that some consistent construct underlies performance on, e.g., all similar match trials relative to all identical match trials. However, any model specification carries with it particular side effects, which may be advantages or limitations depending on the context. In this case, by  using interaction terms to match our model to the factorial design of the task, estimates are assumed to be more similar for factorial conditions sharing a level. For example, the estimates for similar art match trials OFF smoking are regularized to be closer to estimates for other similar match trials, other art match trials, and other OFF smoking trials. Such a model allows us to make true factorial inferences, arguably the most powerful, about the effects of our manipulations.
-
-However, the constraining effects of a factorial model specification may cause the model to _underestimate_ the magnitude of a simple effect. For example, if there were a true underlying ON-smoking improvement in working memory accuracy, but only for one of the 2 x 2 factorial levels of probe similarity type x attentional state, the absence of the simple effect in three of the four factorial levels would cause the model to estimate the magnitude of the simple effect in the fourth level too conservatively, thus reducing our ability to detect such an effect.
-
-An alternative model specification that mitigates this concern is a dummy-coded model. In a dummy-coded model, each factorial level is instead treated as an independent level of a single variable. As such, simple effects are not constrained by the model to be similar for similar factorial levels, allowing the model to be more liberal in estimating an effect that only appears in a single level. For this reason, we estimated a supplementary model with two predictors: one predictor for match status, and one predictor for task condition with 8 levels, one for each factorial combination of smoking session, probe similarity type, and attentional state (2 x 2 x 2 = 8), to probe for simple effects.
-
-To further reduce factorial model constraints, we estimated a final set of four supplementary models, each with match status and smoking session as predictors. Each model was estimated on a different subset of data for each of the 2 x 2 = 4 factorial levels of probe similarity type x attentional state. These models are the most liberal in allowing the estimated effect of smoking session on working memory accuracy to differ across levels of probe similarity and attentional state.
-
-Given that all models with the same predictors on the same outcome are ultimately only different flavors of quantifying the same underlying patterns present in the data, alternative model specifications should yield qualitatively similar estimates as our primary model. 
-
-### relational on-off room-art A' interaction? from dummy model
-
-```{r, echo = FALSE}
-aprimes_dummy_smoking <- preplots_fixef %>%
-  filter(name == "dummy_all") %>%
-  select(-starts_with("rate")) %>%
-  pivot_wider(names_from = on_smoking, values_from = aprime) %>%
-  mutate(aprime_diff = on - off) %>%
-  group_by(exptCond, probe) %>%
-  summarize(diff_mean = mean(aprime_diff), diff_sd = sd(aprime_diff)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
-
-aprimes_dummy_smoking_probe <- preplots_fixef %>%
-  filter(name == "dummy_all") %>%
-  select(-starts_with("rate")) %>%
-  pivot_wider(names_from = c(on_smoking, probe), values_from = aprime) %>%
-  mutate(aprime_diff_room = on_room - off_room,
-         aprime_diff_art = on_art - off_art,
-         aprime_diff_smoking_probe = aprime_diff_room - aprime_diff_art) %>%
-  group_by(exptCond) %>%
-  summarize_at(vars(starts_with("aprime_diff")), list(mean = mean, sd = sd)) %>%
-  mutate_if(is.numeric, signif, digits = signif_digits)
-```
-
-
-We investigated simple effects of smoking session within each of the four factorial levels of probe similarity type x attentional state in the unified dummy-coded model. 
-
-In this less conservative analysis, we found a numerical, but negligible, simple-effect interaction, within similar match trials, of attentional state type and smoking session on working memory accuracy, such that A' for similar room match trials ON smoking was numerically higher than A' for similar room match trials OFF smoking, `r aprimes_dummy_smoking_probe$aprime_diff_room_mean[aprimes_dummy_smoking_probe$exptCond == "relational"]` +- `r aprimes_dummy_smoking_probe$aprime_diff_room_sd[aprimes_dummy_smoking_probe$exptCond == "relational"]`, but that the relationship was flipped between similar art match ON and similar art match OFF trials, `r aprimes_dummy_smoking_probe$aprime_diff_art_mean[aprimes_dummy_smoking_probe$exptCond == "relational"]` +- `r aprimes_dummy_smoking_probe$aprime_diff_art_sd[aprimes_dummy_smoking_probe$exptCond == "relational"]`. Actual interaction A' difference: `r aprimes_dummy_smoking_probe$aprime_diff_smoking_probe_mean[aprimes_dummy_smoking_probe$exptCond == "relational"]` +- `r aprimes_dummy_smoking_probe$aprime_diff_smoking_probe_sd[aprimes_dummy_smoking_probe$exptCond == "relational"]`.
+To assess model fit and validate subsequent inferences from the model, we used the model to generate each subject's posterior predicted A' in each task condition, and calculated the errors between predicted A' and raw A' for each subject x condition. We examined median absolute error, as median absolute error does not up-weight extremely large errors, as does root-mean-squared error. Median absolute error was below 0.05 A' units across subjects in seven of eight factorial task conditions.
