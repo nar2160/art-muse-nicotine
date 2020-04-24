@@ -38,7 +38,7 @@ posterior_preplot_params <- function (object) {
   return (out)
 }
 
-posterior_preplot_bysubj <- function (object, newdata, pred_col = "y_pred", type = c("median", "by_iter", "trialwise"), draws = 1000) {
+posterior_preplot_bysubj <- function (object, newdata, pred_col = "y_pred", type = c("median", "mean", "by_iter", "trialwise"), draws = 1000) {
   # if (type == "trialwise" & draws > 10) stop("too many posterior_predict draws, probably!")
   if (type != "trialwise") {
     out <- object %>%
@@ -73,12 +73,18 @@ posterior_preplot_bysubj <- function (object, newdata, pred_col = "y_pred", type
     
     return(out)
     
-  } else if (type == "median") {
+  } else if (type == "median" | type == "mean") {
     # Just the median of every predicted point for every subject
     # Note that this doesn't select in a paired way for the "median iteration"
     # returns a VECTOR which needs to get slapped onto newdata
+    if (type == "median") {
+      out %<>%
+      apply(2, median)
+    } else if (type == "mean") {
+      out %<>%
+      apply(2, mean)
+    }
     out %<>%
-      apply(2, median) %>%
       t() %>%
       c()
     
@@ -825,7 +831,9 @@ As of 02/05/2020: Keep the original "onoff" model, and add one where the two-way
 03/18/2020: Fit the dummy model separately for each `exptCond * probe` condition
 
 ```{r, eval = FALSE}
-models <- tibble(has_probe = c(rep(list(c("art", "room")), 3), as.list(rep(c("art", "room"), times = 3))),
+models <- tibble(has_probe = c(rep(list(c("art", "room")), 3),
+                               as.list(rep(c("art", "room"),
+                                           times = 3))),
                   has_exptCond = c(rep(list(0:1), 3 + 2), as.list(rep(0:1, each = 2))),
                   has_valid = c(list(1L, 0:1),
                                as.list(rep(1L, 1 + 2 + 4))),
@@ -866,21 +874,22 @@ models <- tibble(has_probe = c(rep(list(c("art", "room")), 3), as.list(rep(c("ar
                         ),
                         trial_type = paste(trial_type, probe, sep = "_"),
                         trial_type = fct_rev(trial_type),
+                        resp_c = resp - 0.5,
                         corResp = corResp - 0.5,
                         exptCond = exptCond - 0.5,
                         probe = recode(probe,
                                        art = -0.5,
                                        room = 0.5),
-                        on_smoking = on_smoking - 0.5),
-                    log_rt = log(rt * 1000)),
+                        on_smoking = on_smoking - 0.5,
+                    log_rt = log(rt * 1000))),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
          txt_formula = case_when(
            name == "full" ~ paste0("(", txt_formula, ")^3"),
-           name == "manip_check" ~ paste0(txt_formula, " + corResp:valid"),
+           name == "manip_check" ~ paste0("(", txt_formula, ")^3"),
            startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(", txt_formula, ")^2")),
          txt_formula = paste("resp ~", txt_formula, "+", ranefs),
          # all the RT model setting stuff is here now
-         terms_rt = map(terms, ~c("resp", .x)),
+         terms_rt = map(terms, ~c("resp_c", .x)),
          txt_formula_rt = map_chr(terms_rt, ~paste(.x, collapse = " + ")),
          ranefs_rt = case_when(
            name == "full" ~ paste0("(1 + (", txt_formula_rt,")^3 | subj_num)"),
@@ -891,20 +900,20 @@ models <- tibble(has_probe = c(rep(list(c("art", "room")), 3), as.list(rep(c("ar
          txt_formula_rt = map_chr(terms_rt, ~paste(.x, collapse = " + ")),
          txt_formula_rt = case_when(
            name == "full" ~ paste0("(", txt_formula_rt, ")^3"),
-           name == "manip_check" ~ paste0(txt_formula_rt, " + corResp:valid + resp:valid"),
+           name == "manip_check" ~ paste0("(", txt_formula_rt, ")^3"),
            startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(", txt_formula_rt, ")^3")),
-         txt_formula_rt = paste("log_rt ~", txt_formula_rt, "+", ranefs_rt))
+         txt_formula_rt = paste("log_rt ~", txt_formula_rt, "+", ranefs_rt),
+         init_r. = 1, # init_r. = if_else(name %in% c("full", "dummy_all"), 1, 2),
+         iter. = if_else(startsWith(name, "sep"), 3000L, 2000L))
 
 models %<>%
-  mutate(init_r. = 1, # init_r. = if_else(name %in% c("full", "dummy_all"), 1, 2),
-         iter. = if_else(startsWith(name, "sep"), 3000L, 2000L),
-         model = pmap(list(txt_formula, data, init_r., iter.), 
+  mutate(model = pmap(list(txt_formula, data, init_r., iter.), 
                       function(a, b, c, d) {
                         rstanarm::stan_glmer(as.formula(a),
                                              family = binomial(link = "logit"),
                                              data = b,
-                                             prior = rstanarm::cauchy(0, 5),
-                                             prior_intercept = rstanarm::cauchy(0, 5),
+                                             prior = rstanarm::cauchy(0, 2.5),
+                                             prior_intercept = rstanarm::cauchy(0, 2.5),
                                              init_r = c,
                                              # MIGHT just need init_r = 1 for the dummy_all one...?
                                              # and then rel_room needs iter = 3000
@@ -945,7 +954,7 @@ preplots_params <- models %>%
 preplots_bysubj <- models %>%
   select(name, terms, data, model) %>%
   mutate(data = map2(data, terms, ~.x %>% select("subj_num", .y) %>% distinct()),
-         predicted = map2(model, data, ~posterior_preplot_bysubj(.x, .y, pred_col = "resp_pred", type = "median", draws = 500)),
+         predicted = map2(model, data, ~posterior_preplot_bysubj(.x, .y, pred_col = "resp_pred", type = "mean", draws = 400)),
          predicted = map_if(predicted, !startsWith(name, "dummy"),
                             ~.x %>%
                               mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
@@ -1062,18 +1071,18 @@ preplots_rt_fixef <- models %>%
   select(name, terms_rt, data, model_rt) %>%
   rename(terms = terms_rt, model = model_rt) %>%
   mutate(data = map2(data, terms, ~.x %>% select(.y) %>% distinct()),
-         predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "log_rt_pred")),
+         predicted = map2(model, data, ~posterior_preplot_fixef(.x, .y, pred_col = "log_rt_pred")),   
          predicted = map_if(predicted, !startsWith(name, "dummy"),
                             ~.x %>%
                               mutate_at(vars(one_of("exptCond")), ~recode(.x, `-0.5` = "control", `0.5` = "relational")) %>%
                               mutate_at(vars(one_of("probe")), ~recode(.x, `-0.5` = "art", `0.5` = "room")) %>%
-                              mutate(resp = recode(resp, `0` = "no_match", `1` = "match"),
+                              mutate(resp = recode(resp_c, `-0.5` = "no_match", `0.5` = "match"),
                                      corResp = recode(corResp, `-0.5` = "no_match", `0.5` = "match"),
                                      on_smoking = recode(on_smoking, `-0.5` = "off", `0.5` = "on")),
                             .else = ~.x %>%
                               separate(trial_type,
                                        into = c("on_smoking", "exptCond", "probe")) %>%
-                              mutate(resp = recode(resp, `0` = "no_match", `1` = "match"),
+                              mutate(resp = recode(resp_c, `-0.5` = "no_match", `0.5` = "match"),
                                      corResp = recode(corResp, `-0.5` = "fa", `0.5` = "hit"),
                                      exptCond = recode(exptCond,
                                                        ctrl = "control",
@@ -1091,15 +1100,17 @@ preplots_rt_fixef <- models %>%
                          resp == "no_match" & corResp == "match" ~ "miss",
                          resp == "match" & corResp == "no_match" ~ "fa",
                          resp == "no_match" & corResp == "no_match" ~ "cr",
-                         TRUE ~ NA_character_)) %>%
-  select(-c(deleteme, exptCond2, probe2))
+                         TRUE ~ NA_character_),
+         rt_pred = exp(log_rt_pred)) %>%
+  select(-c(deleteme, exptCond2, probe2, resp_c))
 
-# save(preplots_params, preplots_bysubj, preplots_fixef, preplots_raw_bysubj, preplots_raw_fixef, file = "ignore/data_R/preplots_rstanarm.rda")
+save(preplots_rt_params, preplots_rt_fixef, file = "ignore/data_R/preplots_rt_rstanarm.rda")
 ```
 
 
 ```{r}
 load("ignore/data_R/preplots_rstanarm.rda")
+load("ignore/data_R/preplots_rt_rstanarm.rda")
 ```
 
 ## results graphin
