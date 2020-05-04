@@ -885,7 +885,7 @@ models <- tibble(has_probe = c(rep(list(c("art", "room")), 3),
          txt_formula = map_chr(terms, ~paste(.x, collapse = " + ")),
          txt_formula = case_when(
            name == "full" ~ paste0("(", txt_formula, ")^3"),
-           name == "manip_check" ~ paste0("(", txt_formula, ")^3"),
+           name == "manip_check" ~ paste0("(", txt_formula, ")^3 + valid:probe:on_smoking:exptCond"),
            startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(", txt_formula, ")^2")),
          txt_formula = paste("resp ~", txt_formula, "+", ranefs),
          # all the RT model setting stuff is here now
@@ -897,10 +897,9 @@ models <- tibble(has_probe = c(rep(list(c("art", "room")), 3),
            startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(1 + (", txt_formula_rt,")^2 | subj_num)"),
            TRUE ~ NA_character_
          ),
-         txt_formula_rt = map_chr(terms_rt, ~paste(.x, collapse = " + ")),
          txt_formula_rt = case_when(
            name == "full" ~ paste0("(", txt_formula_rt, ")^3"),
-           name == "manip_check" ~ paste0("(", txt_formula_rt, ")^3"),
+           name == "manip_check" ~ paste0("(", txt_formula_rt, ")^3 + valid:probe:on_smoking:exptCond"),
            startsWith(name, "dummy") | startsWith(name, "sep") ~ paste0("(", txt_formula_rt, ")^3")),
          txt_formula_rt = paste("log_rt ~", txt_formula_rt, "+", ranefs_rt),
          init_r. = 1, # init_r. = if_else(name %in% c("full", "dummy_all"), 1, 2),
