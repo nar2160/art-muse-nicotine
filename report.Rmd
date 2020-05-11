@@ -32,8 +32,9 @@ this_theme <- function (...) {
 }
 
 signif_digits <- 3L
-colors_exptCond <- c("#FF1926", "#0088c7")
-colors_exptCond_probe <- c("#ff1926", "#0088c7", "#ff9ea3",  "#2ebdff")
+colors_exptCond <- c("#eb000c", "#24aaf2")
+# #77beed for light blue?
+colors_exptCond_probe <- c("#eb000c", "#24aaf2", "#ff5c74",  "#80ccff")
 ```
 
 # Da plotz
@@ -175,19 +176,19 @@ x <- preplots_params %>%
   unnest(iterations) %>%
   mutate(term = recode_factor(term,
                               intercept = "intercept",
-                              corResp = "match present?",
+                              corResp = "match status",
                               exptCond = "condition",
                               probe = "attentional state",
                               on_smoking = "smoking status",
-                              `corResp:exptCond` = "match present? x condition",
-                              `corResp:probe` = "match present? x attention",
-                              `corResp:on_smoking` = "match present? x smoking",
+                              `corResp:exptCond` = "match status x condition",
+                              `corResp:probe` = "match status x attention",
+                              `corResp:on_smoking` = "match status x smoking",
                               `probe:exptCond` = " condition x attention",
                               `on_smoking:exptCond` = "condition x smoking",
                               `probe:on_smoking` = "attention x smoking",
-                              `corResp:probe:exptCond` = "match present? x condition x attention",
-                              `corResp:on_smoking:exptCond` = "match present? x condition x smoking",
-                              `corResp:probe:on_smoking` = "match present? x attention x smoking",
+                              `corResp:probe:exptCond` = "match status x condition x attention",
+                              `corResp:on_smoking:exptCond` = "match status x condition x smoking",
+                              `corResp:probe:on_smoking` = "match status x attention x smoking",
                               `probe:on_smoking:exptCond` = "condition x attention x smoking")) %>%
   group_by(term) %>%
   summarize(est_median = median(estimate),
@@ -236,7 +237,7 @@ x <- preplots_raw_bysubj %>%
                         aprime_q025 = quantile(aprime, .025),
                         aprime_q975 = quantile(aprime, .975)),
               linetype = 0,
-              alpha = 0.3) +
+              alpha = 0.4) +
   geom_line(aes(group = 1),
             data = preplots_fixef %>%
               filter(name == "full") %>%
@@ -462,7 +463,7 @@ rts_manip_check <- preplots_rt_fixef %>%
   summarize_report(rt_diff, stat_name = "estimated RT difference", unit_name = "msec")
 ```
 
-_Valid vs. Invalid Trials._ We first examined whether our attentional manipulation was successful by comparing performance on valid vs. invalid trials. If attention is effectively engaged by the cue at the beginning of the trial (i.e., ‘ART’ or ‘ROOM’), then performance should be more accurate and faster when the probe matches the cue (i.e., valid trials) than when it does not (i.e., invalid trials; Posner, 1980). To that end, we used a Bayesian mixed model to examine performance across experimental conditions as a function of trial validity (valid vs. invalid trials). These analyses confirmed that participants were more accurate on valid vs. invalid trials, as indexed by a main effect of validity (`r get_coefs("manip_check", "corResp:valid")`; `r aprimes_manip_check$txt_apa`). We also found an interaction of validity and condition on accuracy such that participants showed a smaller valid vs. invalid boost in accuracy for identical trials relative to similar trials (`r get_coefs("manip_check", "corResp:valid:exptCond")`; identical trials: `r aprimes_manip_check_exptCond %>% filter(exptCond == "control") %>% pull(txt_apa)`; similar trials: `r aprimes_manip_check_exptCond %>% filter(exptCond == "relational") %>% pull(txt_apa)`). Furthermore, an analysis of log-transformed response times (RTs) confirmed that participants were faster on valid vs. invalid trials (`r get_coefs("manip_check", "valid", coefs_rt)`; `r rts_manip_check$txt_apa`).
+_Valid vs. Invalid Trials._ We first examined whether our attentional manipulation was successful by comparing performance on valid vs. invalid trials. If attention is effectively engaged by the cue at the beginning of the trial (i.e., ‘ART’ or ‘ROOM’), then performance should be more accurate and faster when the probe matches the cue (i.e., valid trials) than when it does not (i.e., invalid trials; Posner, 1980). To that end, we used a Bayesian mixed model to examine performance across experimental conditions as a function of trial validity (valid vs. invalid trials). These analyses confirmed that participants were more accurate on valid vs. invalid trials, as indexed by a main effect of validity (`r get_coefs("manip_check", "corResp:valid")`; `r aprimes_manip_check$txt_apa`). We also found an interaction of validity and condition on accuracy, such that participants showed a smaller valid vs. invalid boost in A’ for identical trials relative to similar trials (`r get_coefs("manip_check", "corResp:valid:exptCond")`; identical trials: `r aprimes_manip_check_exptCond %>% filter(exptCond == "control") %>% pull(txt_apa)`; similar trials: `r aprimes_manip_check_exptCond %>% filter(exptCond == "relational") %>% pull(txt_apa)`). Furthermore, an analysis of log-transformed response times (RTs) confirmed that participants were faster on valid vs. invalid trials (`r get_coefs("manip_check", "valid", coefs_rt)`; `r rts_manip_check$txt_apa`).
 
 Taken together, these results suggest that attention was effectively engaged by the cue at the beginning of the trial: Participants were more accurate and faster on valid vs. invalid trials. Having verified that participants modulated their attention based on trial instructions, we next focus analyses on valid trials.
 
@@ -515,15 +516,15 @@ rts_2x2x2_probe_exptCond <- preplots_rt_fixef %>%
   summarize_report(rt_diff, stat_name = "estimated RT difference", unit_name = "msec")
 ```
 
-**Figure N-1.** Coefficient estimates of the model for trialwise match detection performance. In this model, the main effect of `is_match` reflects the magnitude of behavioral sensitivity across all experimental conditions. Differences in sensitivity between experimental conditions are indexed by interaction terms between `is_match` and the other experimental conditions. Accordingly, predicted A' (shown below in Figure N) was generated from these coefficients by treating the posterior estimate of P("choose match" | is_match = present) as the hit rate, and P("choose match" | is_match = absent) as the false alarm rate, in the A' formula. Error bars = 95% credible intervals.
+**Figure 4.** Coefficient estimates of the model for trialwise match detection performance (i.e., A’). In this model, the main effect of match status reflects the magnitude of behavioral sensitivity across all experimental conditions. Differences in sensitivity between experimental conditions are indexed by interaction terms between match status and the other experimental conditions (i.e., attentional state, condition, and smoking session). Accordingly, predicted A’ (shown below in **Figure 5**) was generated from these coefficients by treating the posterior estimate of P(match endorsement = “yes” | match status = present) as the hit rate, and P(match endorsement = “yes” | match status = absent) as the false alarm rate, in the A’ formula. Error bars = 95% credible intervals.
 
-**Figure N.** Behavioral performance (A'). Overall, participants performed better on identical trials (left two panels, red) than similar trials (right two panels, blue). Points and faint lines indicate raw A' values for each participant. Heavy lines and error ribbons indicate group-level model-predicted A' +- 95% credible interval.  Dashed horizontal line indicates chance performance (A' = 0.5).
+**Figure 5.** Behavioral performance (A’). Participants’ performance did not differ between OFF and ON smoking sessions for any trial type (each panel = one trial type). Points and faint lines indicate raw A’ values for each participant. Heavy lines and error ribbons indicate group-level model-predicted A’ +- 95% credible interval. Dashed horizontal line indicates chance performance (A’ = 0.5).
 
-_Art vs. Room and Identical vs. Similar Trials._ We next examined how individuals performed across conditions (identical vs. similar trials) and attentional states (art vs. room) in a Bayesian mixed model predicting accuracy as a function of identical vs. similar condition, art vs. room attention type, and on vs. off smoking session. As expected, A’ was substantially higher on identical vs. similar trials, as indexed by a main effect of condition (`r get_coefs("full", "corResp:exptCond")`; estimated A' difference = `r -aprimes_2x2x2_exptCond$avg`, 95% CI [`r -aprimes_2x2x2_exptCond$q975`, `r -aprimes_2x2x2_exptCond$q025`]). We did not find a comparable main effect of condition on log-RTs (`r get_coefs("full", "exptCond", coefs_rt)`; `r rts_2x2x2_exptCond$txt_apa`).
+_Art vs. Room and Identical vs. Similar Trials._ We next examined how individuals performed across conditions (identical vs. similar trials) and attentional states (art vs. room) in Bayesian mixed models predicting performance as a function of identical vs. similar condition, art vs. room attention type, and on vs. off smoking session (see **Figure 4** for model outputs). As expected, A’ was substantially higher on identical vs. similar trials (**Figure 5**), as indexed by a main effect of condition (`r get_coefs("full", "corResp:exptCond")`; estimated A' difference = `r -aprimes_2x2x2_exptCond$avg`, 95% CI [`r -aprimes_2x2x2_exptCond$q975`, `r -aprimes_2x2x2_exptCond$q025`]). We did not find a comparable main effect of condition on log-RTs (`r get_coefs("full", "exptCond", coefs_rt)`; `r rts_2x2x2_exptCond$txt_apa`).
 
 In contrast, performance was not meaningfully different between art and room attentional states, neither for A’ (`r get_coefs("full", "corResp:probe")`; `r aprimes_2x2x2_probe$txt_apa`) nor for log-RTs (`r get_coefs("full", "corResp:probe", coefs_rt)`; `r rts_2x2x2_probe$txt_apa`).
 
-However, for A’, there was an interaction between condition and attentional state, `r get_coefs("full", "corResp:probe:exptCond")`. A’ on identical trials was higher for room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "ctrl") %>% pull(txt_apa)`), but A’ on similar trials did not meaningfully differ between room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "rel") %>% pull(txt_apa)`). There was no such interaction for log-RTs, (`r get_coefs("full", "probe:exptCond", coefs_rt)`).
+However, for A’, there was an interaction between condition and attentional state (**Figure 5**), `r get_coefs("full", "corResp:probe:exptCond")`. A’ on identical trials was higher for room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "ctrl") %>% pull(txt_apa)`), but A’ on similar trials did not meaningfully differ between room vs. art attention (`r aprimes_2x2x2_probe_exptCond %>% filter(metric_type == "rel") %>% pull(txt_apa)`). There was no such interaction for log-RTs, (`r get_coefs("full", "probe:exptCond", coefs_rt)`).
 
 ```{r, echo = FALSE}
 aprimes_2x2x2_smoking <- preplots_fixef %>%
@@ -628,12 +629,9 @@ rts_smoking_exptCond_probe <- preplots_rt_fixef %>%
   summarize_report(rt_diff, name, stat_name = "estimated RT difference", unit_name = "msec")
 ```
 
-_Comparison of ON vs OFF smoking sessions._ We then turned to how performance on these tasks might be modulated by nicotine. We did not find a main effect of smoking session on A’, (`r get_coefs("full", "corResp:on_smoking")`; `r aprimes_2x2x2_smoking$txt_apa`), suggesting that across trial types, A’ was not consistently higher during the ON session than the OFF session.
-
-We also did not find a main effect of smoking session on log-RTs (`r get_coefs("full", "on_smoking", coefs_rt)`; `r rts_2x2x2_smoking$txt_apa`).
+_Comparison of ON vs OFF smoking sessions._ We then turned to how performance on these tasks might be modulated by nicotine (**Figure 5**). We did not find a main effect of smoking session on A’, (`r get_coefs("full", "corResp:on_smoking")`; `r aprimes_2x2x2_smoking$txt_apa`), suggesting that across trial types, A’ was not consistently higher during the ON session than the OFF session. We also did not find a main effect of smoking session on log-RTs (`r get_coefs("full", "on_smoking", coefs_rt)`; `r rts_2x2x2_smoking$txt_apa`).
 
 Next, we interrogated task-dependent effects of nicotine on performance. Because we initially hypothesized that nicotine would preferentially improve performance on similar room trials, we also examined two-way interactions between smoking session and condition (identical vs. similar) and smoking session and attentional state (art vs. room) on performance. We did not find a two-way interaction effect of smoking session and condition on A’ (`r get_coefs("full", "corResp:on_smoking:exptCond")`) or RT (`r get_coefs("full", "on_smoking:exptCond", coefs_rt)`), nor did we find a two-way interaction effect of smoking session and attentional state on A’ (`r get_coefs("full", "corResp:probe:on_smoking")`) or RT (`r get_coefs("full", "probe:on_smoking", coefs_rt)`).
-
 
 ```{r, echo = FALSE}
 coefs_aprime_by_ppm <- aprime_by_ppm_boot %>%
@@ -662,19 +660,21 @@ pcor_diff_aprime_by_ppm <- aprime_by_ppm_boot %>%
   group_by(iteration, exptCond, probe) %>%
   summarize(pcor = cor(aprime_diff_resid, ppm_diff_resid)) %>%
   pivot_wider(names_from = c(exptCond, probe), values_from = pcor) %>%
-  mutate(pcor_diff_sa = relational_art - relational_room,
-         pcor_diff_ia = control_art - relational_room,
-         pcor_diff_ir = control_room - relational_room) %>%
+  mutate(pcor_diff_sa = relational_room - relational_art,
+         pcor_diff_ia = relational_room - control_art,
+         pcor_diff_ir = relational_room - control_room) %>%
   summarize_report(pcor_diff, stat_name = "partial Pearson's r difference")
 ```
 
-_Supplementary Models of Performance._ ONLY UPDATED IN THE GOOGLE DOC.
+_Supplementary Models of Performance._ The above analyses model the task as a 2 (condition: identical or similar) x 2 (attentional state: art or room) x 2 (smoking session: OFF or ON) factorial design. Although this has many advantages, there are also statistical disadvantages (see Methods). To assess whether our results vary based on statistical modeling approach, we also examined performance ON vs. OFF smoking with two other approaches. The first approach used a model with separate predictors for eight factorial levels of interest (i.e., the OFF and ON smoking sessions for identical art, identical room, similar art, and similar room trials). The second approach used four separate models to examine performance ON vs. OFF smoking in each task separately (one model each for identical art, identical room, similar art, similar room). We found that in these supplementary models, there was still no difference in performance between smoking sessions for any of the tasks. Thus, across multiple statistical modeling approaches, we failed to find a performance benefit ON vs OFF nicotine.
 
-_Individual Differences._ The above analyses treat smoking as a binary variable: they simply compared the ON and OFF smoking sessions. However, more precise information is available about individuals’ smoking, because for each session we obtained measures of carbon monoxide (CO) parts-per-million (ppm). This tells us how recently or how much an individual smoked, allowing us to investigate possible dose-dependent effects of smoking nicotine. If nicotine smoking enhances attentional performance, then the individuals who show the greatest CO ppm difference (in the ON vs. OFF smoking session) should show the greatest performance enhancements (in the ON vs. OFF smoking session). To investigate this, we ran four independent, between-participants linear regressions predicting A’ difference as a function of CO ppm difference (ON vs. OFF), with one regression for each task: identical art, identical room, similar art, and similar room.
+_Individual Differences._ The above analyses treat smoking as a binary variable: they simply compared the ON and OFF smoking sessions. However, more precise information is available about individuals’ smoking, because for each session we obtained measures of expired breath carbon monoxide (CO) parts-per-million (ppm). This tells us how recently or how much an individual smoked, allowing us to investigate possible dose-dependent effects of nicotine smoking (e.g., Vollstädt-Klein et al., 2011; Vossel, Warbrick, Mobascher, Winterer, & Fink, 2011). If nicotine smoking enhances attentional performance, then the individuals who show the greatest CO ppm difference (in the ON vs. OFF smoking session) should show the greatest performance enhancements (in the ON vs. OFF smoking session). To investigate this, we ran four independent, between-participants linear regressions predicting A’ difference as a function of CO ppm difference (ON vs. OFF), with one regression for each task: identical art, identical room, similar art, and similar room.
 
-**Figure N+1.** Dose-dependent effects of nicotine on behavioral sensitivity (A'). On similar room trials (bottom right), participants who showed a greater increase in CO ppm from the OFF to the ON smoking session showed larger increases in A' from the OFF to the ON smoking session. Participants did not show such an effect for identical art, identical room, or similar art trials. Within each panel, each point represents one subject; each subject appears in all four panels. * bootstrapped p < .05.
+**Figure 6.** Dose-dependent effects of nicotine smoking on behavioral sensitivity (A’). On similar room trials (bottom right), participants who showed a greater increase in CO ppm from the OFF to the ON smoking session showed larger increases in A’ from the OFF to the ON smoking session. Participants did not show such an effect for identical art, identical room, or similar art trials. Within each panel, each point represents one participant; each participant appears in all four panels. * bootstrapped p < .05.
 
-Indeed, we found a modest positive correlation between these measures for the similar room task (`r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`; `r pcor_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`), such that a CO increase of 1 ppm from OFF to ON smoking predicted a `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(raw)` unit increase in A’ from OFF to ON smoking. CO ppm differences did not predict performance enhancements on any other trial type (identical art: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "art") %>% pull(txt_apa_2)`; identical room: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "room") %>% pull(txt_apa_2)`; similar art: `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "art") %>% pull(txt_apa_2)`). Direct comparison showed that the partial Pearson correlation between CO ppm difference and A’ difference ON - OFF smoking for similar room trials was marginally higher than than the partial Pearson correlations for the other three trial types (similar room > identical art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ia") %>% pull(txt_apa)`; similar room > identical room: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ir") %>% pull(txt_apa)`; similar room > similar art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "sa") %>% pull(txt_apa)`).  
+Indeed, we found a modest positive correlation between these measures for the similar room task (`r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`; `r pcor_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`), such that a CO increase of 1 ppm from OFF to ON smoking predicted a `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(raw)` unit increase in A’ from OFF to ON smoking. CO ppm differences did not predict performance enhancements on any other trial type (identical art: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "art") %>% pull(txt_apa_2)`; identical room: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "room") %>% pull(txt_apa_2)`; similar art: `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "art") %>% pull(txt_apa_2)`). Direct comparison showed that the partial Pearson correlation between CO ppm difference and A’ difference ON - OFF smoking for similar room trials was marginally higher than than the partial Pearson correlations for the other three trial types (similar room > identical art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ia") %>% pull(txt_apa)`; similar room > identical room: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ir") %>% pull(txt_apa)`; similar room > similar art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "sa") %>% pull(txt_apa)`).
+
+Indeed, we found a modest positive correlation between these measures for the similar room task (`r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`; `r pcor_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`), such that a CO increase of 1 ppm from OFF to ON smoking predicted a 0.0129 unit increase in A’ from OFF to ON smoking (**Figure 6**). CO ppm differences did not predict performance enhancements on any other trial type (identical art: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "art") %>% pull(txt_apa_2)`; identical room: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "room") %>% pull(txt_apa_2)`; similar art: `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "art") %>% pull(txt_apa_2)`). Direct comparison showed that the partial Pearson correlation between CO ppm difference and A’ difference ON - OFF smoking for similar room trials was marginally higher than the partial Pearson correlations for the other three trial types (similar room > identical art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ia") %>% pull(txt_apa)`; similar room > identical room: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ir") %>% pull(txt_apa)`; similar room > similar art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "sa") %>% pull(txt_apa)`).
 
 ## describe converging results from alternate model fits
 
