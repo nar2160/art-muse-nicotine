@@ -2,9 +2,18 @@
 
 require(tidyverse)
 
+snodgrass <- function (num, denom) return((num+.5)/(denom+1))
+snodgrass_vec <- function (vec) return((sum(vec) + 0.5) / (length(vec) + 1))
+sdt_pr <- function (hit, fa) return(hit - fa)
+sdt_br <- function(hit, fa) return(fa / (1 - (hit - fa)))
+sdt_aprime <- function (hit, fa) return(.5 + (sign(hit-fa)*((hit-fa)^2 + abs(hit-fa))/(4*pmax(hit,fa)-(4*hit*fa))))
+sdt_b2prime <- function (hit, fa)  return(sign(hit-fa)*(hit*(1-hit) - fa*(1-fa))/(hit*(1-hit) + fa*(1-fa)))
+sdt_dprime <- function (hit, fa) return(qnorm(hit) - qnorm(fa))
+sdt_c <- function (hit, fa) return(-.5 * (qnorm(hit) + qnorm(fa)))
+
 ## read in and preprocess trialwise data from raw ----
 
-demos = read_csv("ignore/demographics/demo_smoke_habits.csv") %>%
+demos = read_csv(here::here("ignore", "demographics", "demo_smoke_habits.csv")) %>%
   mutate(cigs_per_day_est = 10 * cigs_per_day_est) %>%
   mutate_if(is.numeric, as.integer) %>%
   mutate(cigs_per_day_est = .1 * cigs_per_day_est,
@@ -12,7 +21,7 @@ demos = read_csv("ignore/demographics/demo_smoke_habits.csv") %>%
          ppm_off = if_else(condition == 1, ppm_s2, ppm_s1))
 
 # Read in all .txt files in the raw data folder
-raw = tibble(filename = list.files("ignore/data_raw", pattern = ".txt", full.names = TRUE)) %>%
+raw = tibble(filename = list.files(here::here("ignore", "materials", "data"), pattern = ".txt", full.names = TRUE)) %>%
   mutate(data = map(filename, ~.x %>%
                       read_delim(delim = "\t",
                                  skip = 9,
@@ -36,7 +45,7 @@ raw = tibble(filename = list.files("ignore/data_raw", pattern = ".txt", full.nam
                       # recode this col to more informative labels for now
                       mutate_at(c("cue", "probe"), ~recode(., `1` = "art", `2` = "room")))) %>%
   # pull out just the subject and session numbers from the whole file name
-  mutate(subj_num = as.integer(str_sub(filename, start = 32L, end = 34L)),
+  mutate(subj_num = as.integer(str_sub(filename, start = -10L, end = -8L)),
          session_num = str_sub(filename, start = -5L, end = -5L),
          session_num = if_else(session_num == "2", 2L, 1L)) %>%
   select(-filename) %>%
