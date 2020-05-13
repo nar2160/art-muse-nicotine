@@ -1,0 +1,47 @@
+data dictionary for abbreviations used in "artmusePatient_XXX.txt" files showing session data. These are the terms found in the header column. 
+
+trial - trial number for proceeding data (1-80)
+stimOnsetTime - for trial N, time in seconds (relative to experiment start) the base image of trial N appeared
+exptCond - experimental condition; 0 = identical trial, 1 = similar trial
+stimNum - number of the folder (1-80) that the base image and comparison image was drawn from
+cue - the cue that appeared on the screen before the base image; 1 = "ART", 2 = "ROOM"
+probe - the probe that appeared on the screen after the comparison image; 1 = "ART", 2 = "ROOM"
+valid - validity of the trial; 1 = valid trial, 0 = invalid trial
+resp - participant response; 1 = yes there was a match, 0 = no there was not a match
+corResp - the correct response for that trial; 1 = yes there was a match, 0 = no there was not a match
+Acc - whether the participant was accurate on that trial; 1 = accurate, 0 = inaccurate 
+RT - reaction time; the amount of time in seconds it took the participant to respond once the probe appeared on the screen
+
+** note ** for the following variables, the abbreviations denote the trial type and whether it is a hit or false alarm rate using the following logic: 
+
+-	"e_" or "c_" = experimental (referred to as "similar" in the manuscript) or control trial (referred to as "identical" in the manuscript)
+-	"V" or "IV" = valid or invalid trial
+-	"Art" or "Room" = "Art" or "Room trial
+-	"H" or "FA" = hit or false alarm rate 
+
+In addition, these hit and false alarm rates were calculated on a trial by trial basis such that the value in the final row for each column indicates the final hit/false alarm rate for that trial type. "NaN" = not a number.
+
+e_VArtH - experimental valid art trial; hit rate
+e_VArtFA - experimental valid art trial; false alarm rate
+e_VRoomH - experimental valid room trial; hit rate
+e_VRoomFA - experimental valid room trial; false alarm rate
+
+e_IVArtH - experimental invalid art trial; hit rate
+e_IVArtFA - experimental invalid art trial; false alarm rate
+e_IVRoomH - experimental invalid room trial; hit rate
+e_IVRoomFA - experimental invalid room trial; false alarm rate
+
+c_VArtH - control valid art trial; hit rate
+c_VArtFA - control valid art trial; false alarm rate
+c_VRoomH - control valid room trial; hit rate
+c_VRoomFA - control valid room trial; false alarm rate
+
+c_IVArtH - control invalid art trial; hit rate
+c_IVArtFA - control invalid art trial; false alarm rate
+c_IVRoomH - control invalid room trial; hit rate
+c_IVRoomFA - control invalid room trial; false alarm rate
+
+
+
+
+
