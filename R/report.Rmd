@@ -1,5 +1,5 @@
 ---
-title: "report"
+title: "Figures and main text results"
 author: "Monica Thieu"
 date: "3/27/2020"
 output:
@@ -13,11 +13,10 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(magrittr)
 library(rlang)
-load(here::here("ignore", "data_R", "raw.rda"))
-load(here::here("ignore", "data_R", "boots.rda"))
-load(here::here("ignore", "data_R","preplots_rstanarm.rda"))
-load(here::here("ignore", "data_R","preplots_rt_rstanarm.rda"))
-load(here::here("ignore", "data_R", "aprime_by_ppm.rda"))
+
+load(paste(stats_dir,"preplots_rstanarm.rda", sep = "/"))
+load(paste(stats_dir,"preplots_rt_rstanarm.rda", sep = "/"))
+load(paste(stats_dir, "aprime_by_ppm.rda", sep = "/"))
 
 this_theme <- function (...) {
   
@@ -33,142 +32,12 @@ this_theme <- function (...) {
 
 signif_digits <- 3L
 colors_exptCond <- c("#eb000c", "#24aaf2")
-# #77beed for light blue?
-colors_exptCond_probe <- c("#eb000c", "#24aaf2", "#ff5c74",  "#80ccff")
+colors_exptCond_probe <- c(colors_exptCond, "#ff5c74",  "#80ccff")
 ```
 
-# Da plotz
+# The figures
 
-03/27/2020: Redo the aprime ppm boot plot with un-adjusted, not the added variable plot, but keep the multiple regression boot stuff for text reporting. Also re-run the boots for more iterations to stabilize the standard error estimates
-
-Done: FIX WHAT YOU HAVE IN THE GLUE CALL TO REPORT THE CORRECT STD ERROR
-
-04/03/2020: Move forward with the unadjusted aprime x ppm plot, beautify it accordingly and possibly??? add significance visual highlight
-
-```{r major-plot-aprime-ppm-boot}
-x <- aprime_by_ppm_boot %>%
-  select(iteration, exptCond, probe, data_raw) %>%
-  unnest(data_raw) %>%
-  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
-  group_by(exptCond, probe, obs, ppm_diff, aprime_diff, aprime_diff_fit) %>%
-  summarize(boot_median = median(predicted),
-            boot_q025 = quantile(predicted, .025),
-            boot_q975 = quantile(predicted, .975)) %>%
-  mutate(rel_room = if_else(exptCond == "similar" & probe == "room", TRUE, FALSE)) %>%
-  ggplot(aes(x = ppm_diff, y = aprime_diff,
-             color = interaction(exptCond, probe),
-             fill = interaction(exptCond, probe))) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", formula = y ~ x, size = 1, alpha = 0.3) +
-  geom_text(aes(label = this_label),
-            data = crossing(ppm_diff = 7.5, aprime_diff = -.18,
-                            exptCond = c("identical", "similar"), probe = c("art", "room")) %>%
-              mutate(this_label = if_else(exptCond == "similar" & probe == "room", "*", "")),
-            size = 10, color = "black") +
-  scale_color_manual(values = colors_exptCond_probe) +
-  scale_fill_manual(values = colors_exptCond_probe) +
-  facet_grid(probe ~ exptCond) +
-  guides(color = FALSE, fill = FALSE) +
-  labs(x = "CO ppm difference (ON smoking - OFF smoking)",
-       y = "A' difference (ON smoking - OFF smoking)") +
-  this_theme()
-
-x
-
-x %>%
-  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_all.png",
-       plot = .,
-       device = "png",
-       width = 6,
-       height = 6,
-       units = "in")
-
-(x + theme(panel.grid = element_blank())) %>%
-  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_none.png",
-       plot = .,
-       device = "png",
-       width = 6,
-       height = 6,
-       units = "in")
-
-(x + theme(panel.grid.minor = element_blank())) %>%
-  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_minimal.png",
-       plot = .,
-       device = "png",
-       width = 6,
-       height = 6,
-       units = "in")
-```
-
-```{r minor-plot-aprime-ppm-resid-boot}
-aprime_by_ppm_boot %>%
-  select(iteration, exptCond, probe, data_raw) %>%
-  unnest(data_raw) %>%
-  group_by(exptCond, probe, obs, ppm_diff_resid, aprime_diff_resid, aprime_diff_fit_resid) %>%
-  summarize(boot_median = median(predicted),
-            boot_q025 = quantile(predicted, .025),
-            boot_q975 = quantile(predicted, .975)) %>%
-  mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)) %>%
-  ggplot(aes(x = ppm_diff_resid, y = aprime_diff_resid, color = rel_room, fill = rel_room)) +
-  geom_point(alpha = 0.5) +
-  geom_ribbon(aes(ymin = boot_q025, ymax = boot_q975), color = FALSE, alpha = 0.3) +
-  geom_line(aes(y = aprime_diff_fit_resid), size = 1) +
-  geom_text(aes(label = glue::glue("beta = {estimate_raw}\n95% boot int = [{boot_q025}, {boot_q975}]")),
-            data = aprime_by_ppm_boot %>%
-              mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
-              select(iteration, exptCond, probe, coefs) %>%
-              unnest(coefs) %>%
-              group_by(exptCond, probe, term, estimate_raw) %>%
-              summarize(boot_median = median(estimate),
-                        boot_mean = mean(estimate),
-                        boot_q025 = quantile(estimate, .025),
-                        boot_q975 = quantile(estimate, .975)) %>%
-              mutate_if(is.numeric, signif, digits = signif_digits) %>%
-              filter(term == "ppm_diff") %>%
-              mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)),
-            x = 9, y = -0.5, hjust = 1) +
-  # geom_smooth(method = "lm", fill = "blue") +
-  facet_grid(probe ~ exptCond) +
-  guides(color = FALSE, fill = FALSE) +
-  labs(x = "ppm_diff | aprime_off",
-       y = "aprime_diff | aprime_off",
-       title = "added variable plot of ppm_diff") +
-  theme_bw()
-```
-
-03/27/2020: Investigate this graph... what is up with the bootstrap error distributions not being centered on the raw values
-
-Update 03/31/2020: Refer to relevant exploratory graphs in the analysis document. Basically, the people with shitty off-smoking A' and a huge improvement in A', AND the people with great off-smoking A' and a huge reduction in A', are more likely to get bootstrap-resampled with relatively extreme values, driving the center of the bootstrap distribution of the A' off predictor higher. Additionally, intercepts and A' off slopes are correlated in the bootstrap distribution because the convergence point of the lines is above chance A'.
-
-```{r minor-plot-aprime-ppm-coefplot-boot}
-aprime_by_ppm_boot %>%
-  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
-  select(iteration, exptCond, probe, coefs) %>%
-  unnest(coefs) %>%
-  mutate(term = recode_factor(term,
-                              `(Intercept)` = "Intercept",
-                              aprime_off_c = "A' OFF smoking",
-                              ppm_diff = "ON - OFF change in CO ppm")) %>%
-  group_by(exptCond, probe, term, estimate_raw) %>%
-  summarize(boot_median = median(estimate),
-            boot_mean = mean(estimate),
-            boot_q025 = quantile(estimate, .025),
-            boot_q25 = quantile(estimate, .25),
-            boot_q75 = quantile(estimate, .75),
-            boot_q975 = quantile(estimate, .975)) %>%
-  ggplot(aes(x = boot_median, y = "term")) +
-  geom_vline(xintercept = 0, linetype = 3) +
-  geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
-  geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
-  geom_point() +
-  geom_point(aes(x = boot_mean), color = "purple") +
-  geom_point(aes(x = estimate_raw), color = "hotpink") +
-  facet_grid(exptCond + probe ~ term, scales = "free_x") +
-  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
-       y = "model term",
-       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
-  theme_bw()
-```
+## Figure 4
 
 ```{r minor-plot-2x2x2-coefs}
 x <- preplots_params %>%
@@ -215,11 +84,7 @@ x %>%
          units = "in")
 ```
 
-03/27/2020: use the mean for the below plot. And add a figure b for this one omitting the raw data with sensibly truncated axes
-
-red for control, blue for relational. lighter for art, darker for room. get Nick's illustrator CMYK codes for the conditions
-
-04/03/2020: fix the color char vector to put the colors in the right order, also tweak opacity etc to get stuff to be darker
+## Figure 5
 
 ```{r major-plot-nick}
 x <- preplots_raw_bysubj %>%
@@ -283,7 +148,66 @@ x %>%
        units = "in")
 ```
 
-04/03/2020: Make another version of this plot with 95% ribbons instead of paired angel hair. Also tinker with the angel hair plot to make things more visible. Plus add manual color legend for dark vs light
+## Figure 6
+
+```{r major-plot-aprime-ppm-boot}
+x <- aprime_by_ppm_boot %>%
+  select(iteration, exptCond, probe, data_raw) %>%
+  unnest(data_raw) %>%
+  mutate(exptCond = recode(exptCond, control = "identical", relational = "similar")) %>%
+  group_by(exptCond, probe, obs, ppm_diff, aprime_diff, aprime_diff_fit) %>%
+  summarize(boot_median = median(predicted),
+            boot_q025 = quantile(predicted, .025),
+            boot_q975 = quantile(predicted, .975)) %>%
+  mutate(rel_room = if_else(exptCond == "similar" & probe == "room", TRUE, FALSE)) %>%
+  ggplot(aes(x = ppm_diff, y = aprime_diff,
+             color = interaction(exptCond, probe),
+             fill = interaction(exptCond, probe))) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x, size = 1, alpha = 0.3) +
+  geom_text(aes(label = this_label),
+            data = crossing(ppm_diff = 7.5, aprime_diff = -.18,
+                            exptCond = c("identical", "similar"), probe = c("art", "room")) %>%
+              mutate(this_label = if_else(exptCond == "similar" & probe == "room", "*", "")),
+            size = 10, color = "black") +
+  scale_color_manual(values = colors_exptCond_probe) +
+  scale_fill_manual(values = colors_exptCond_probe) +
+  facet_grid(probe ~ exptCond) +
+  guides(color = FALSE, fill = FALSE) +
+  labs(x = "CO ppm difference (ON smoking - OFF smoking)",
+       y = "A' difference (ON smoking - OFF smoking)") +
+  this_theme()
+
+x
+
+x %>%
+  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_all.png",
+       plot = .,
+       device = "png",
+       width = 6,
+       height = 6,
+       units = "in")
+
+(x + theme(panel.grid = element_blank())) %>%
+  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_none.png",
+       plot = .,
+       device = "png",
+       width = 6,
+       height = 6,
+       units = "in")
+
+(x + theme(panel.grid.minor = element_blank())) %>%
+  ggsave(filename = "ignore/figures/major_plot_aprime_by_ppm_grid_minimal.png",
+       plot = .,
+       device = "png",
+       width = 6,
+       height = 6,
+       units = "in")
+```
+
+## Figures not included in the main text
+
+### Related to Figure 5
 
 ```{r minor-plot-nick-truncated}
 preplots_fixef %>%
@@ -328,17 +252,8 @@ x <- preplots_fixef %>%
   geom_line(aes(group = probe),
             size = 1.5,
             alpha = 0.8) +
-  # geom_text(aes(label = probe),
-    #         data = crossing(on_smoking = 1.5,
-      #                       exptCond = c("identical", "similar"), probe = c("art", "room")) %>%
-        #       mutate(aprime_mean = case_when(exptCond == "identical" & probe == "room" ~ .88,
-          #                                    exptCond == "identical" & probe == "art" ~ .86,
-            #                                  exptCond == "similar" & probe == "room" ~ .9,
-              #                                exptCond == "similar" & probe == "art" ~ .92)),
-            # size = 6) +
   scale_color_manual(values = colors_exptCond_probe) +
   scale_fill_manual(values = colors_exptCond_probe) +
-  # guides(color = FALSE, fill = FALSE) +
   labs(x = "smoking session",
        y = "A'",
        color = "trial type",
@@ -373,23 +288,85 @@ x %>%
        units = "in")
 ```
 
-# Da resultz
+### Related to Figure 6
 
-1. **minor result**: Report valid > invalid A' from `manip_check`
-1. **major result**: describe various ctrl/rel room/art things
-1. **major result**: describe on/off smoking differences
-1. **minor result**: describe converging results from alternate model fits
-1. **minor result**: relational on-off room-art A' interaction? from dummy model (introduce said model also)
-1. **major result**: A' by ppm diffs bootstrap biznaz
+```{r minor-plot-aprime-ppm-resid-boot}
+aprime_by_ppm_boot %>%
+  select(iteration, exptCond, probe, data_raw) %>%
+  unnest(data_raw) %>%
+  group_by(exptCond, probe, obs, ppm_diff_resid, aprime_diff_resid, aprime_diff_fit_resid) %>%
+  summarize(boot_median = median(predicted),
+            boot_q025 = quantile(predicted, .025),
+            boot_q975 = quantile(predicted, .975)) %>%
+  mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)) %>%
+  ggplot(aes(x = ppm_diff_resid, y = aprime_diff_resid, color = rel_room, fill = rel_room)) +
+  geom_point(alpha = 0.5) +
+  geom_ribbon(aes(ymin = boot_q025, ymax = boot_q975), color = FALSE, alpha = 0.3) +
+  geom_line(aes(y = aprime_diff_fit_resid), size = 1) +
+  geom_text(aes(label = glue::glue("beta = {estimate_raw}\n95% boot int = [{boot_q025}, {boot_q975}]")),
+            data = aprime_by_ppm_boot %>%
+              mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+              select(iteration, exptCond, probe, coefs) %>%
+              unnest(coefs) %>%
+              group_by(exptCond, probe, term, estimate_raw) %>%
+              summarize(boot_median = median(estimate),
+                        boot_mean = mean(estimate),
+                        boot_q025 = quantile(estimate, .025),
+                        boot_q975 = quantile(estimate, .975)) %>%
+              mutate_if(is.numeric, signif, digits = signif_digits) %>%
+              filter(term == "ppm_diff") %>%
+              mutate(rel_room = if_else(exptCond == "relational" & probe == "room", TRUE, FALSE)),
+            x = 9, y = -0.5, hjust = 1) +
+  # geom_smooth(method = "lm", fill = "blue") +
+  facet_grid(probe ~ exptCond) +
+  guides(color = FALSE, fill = FALSE) +
+  labs(x = "ppm_diff | aprime_off",
+       y = "aprime_diff | aprime_off",
+       title = "added variable plot of ppm_diff") +
+  theme_bw()
+```
 
-04/03/2020:
+```{r minor-plot-aprime-ppm-coefplot-boot}
+aprime_by_ppm_boot %>%
+  mutate(coefs = map2(coefs, coefs_raw, ~full_join(.x, .y, by = "term"))) %>%
+  select(iteration, exptCond, probe, coefs) %>%
+  unnest(coefs) %>%
+  mutate(term = recode_factor(term,
+                              `(Intercept)` = "Intercept",
+                              aprime_off_c = "A' OFF smoking",
+                              ppm_diff = "ON - OFF change in CO ppm")) %>%
+  group_by(exptCond, probe, term, estimate_raw) %>%
+  summarize(boot_median = median(estimate),
+            boot_mean = mean(estimate),
+            boot_q025 = quantile(estimate, .025),
+            boot_q25 = quantile(estimate, .25),
+            boot_q75 = quantile(estimate, .75),
+            boot_q975 = quantile(estimate, .975)) %>%
+  ggplot(aes(x = boot_median, y = "term")) +
+  geom_vline(xintercept = 0, linetype = 3) +
+  geom_errorbarh(aes(xmin = boot_q025, xmax = boot_q975), height = 0) +
+  geom_errorbarh(aes(xmin = boot_q25, xmax = boot_q75), height = 0, size = 1) +
+  geom_point() +
+  geom_point(aes(x = boot_mean), color = "purple") +
+  geom_point(aes(x = estimate_raw), color = "hotpink") +
+  facet_grid(exptCond + probe ~ term, scales = "free_x") +
+  labs(x = "coefficient (unit effect on ON-OFF A' difference)",
+       y = "model term",
+       title = "model: A' diff ~ A' off (center = 0.5) + ppm diff (raw units)") +
+  theme_bw()
+```
 
-- Harmonize terminology with what Nick is reporting in the patient manuscript returned for response to review
-- report for all estimates, mean [q025, q975]
-- report RT for `manip_check` analysis also
-- generally, where appropriate, interleave RT results in with A' results. In general, do not break RT out by response accuracy, just by task conditions
+Note for the above plots: The bootstrapped sampling distributions for the intercept and off-smoking A' terms are not centered on the observed values. What's happening? Basically, the people with shitty off-smoking A' and a huge improvement in A', AND the people with great off-smoking A' and a huge reduction in A', are more likely to get bootstrap-resampled with relatively extreme values (sort of like... reverse regression to the mean), driving the center of the bootstrap distribution of the A' off predictor higher. Additionally, intercepts and A' off slopes are correlated in the bootstrap distribution because the convergence point of the lines is above chance A'.
 
-## main copy-paste boy
+# Nice-looking results!
+
+Outside of minor content and formatting edits to the body text that I may have missed, the content below should render all of the statistics reported in the paper.
+
+**NB:** I did not set a random seed while running any analyses. As such, you may not be able to _fully_ reproduce the numerical stats reported in the paper if you re-create all the model objects from scratch. Still, any results you get from newly estimated model objects should be negligibly close to what we got the first time around.
+
+--Monica
+
+## Main body of results text
 
 ```{r, echo = FALSE}
 summarize_report <- function (data, col, ..., stat_name = "", unit_name = "", digs = signif_digits) {
@@ -631,7 +608,7 @@ rts_smoking_exptCond_probe <- preplots_rt_fixef %>%
 
 _Comparison of ON vs OFF smoking sessions._ We then turned to how performance on these tasks might be modulated by nicotine (**Figure 5**). We did not find a main effect of smoking session on A’, (`r get_coefs("full", "corResp:on_smoking")`; `r aprimes_2x2x2_smoking$txt_apa`), suggesting that across trial types, A’ was not consistently higher during the ON session than the OFF session. We also did not find a main effect of smoking session on log-RTs (`r get_coefs("full", "on_smoking", coefs_rt)`; `r rts_2x2x2_smoking$txt_apa`).
 
-Next, we interrogated task-dependent effects of nicotine on performance. Because we initially hypothesized that nicotine would preferentially improve performance on similar room trials, we also examined two-way interactions between smoking session and condition (identical vs. similar) and smoking session and attentional state (art vs. room) on performance. We did not find a two-way interaction effect of smoking session and condition on A’ (`r get_coefs("full", "corResp:on_smoking:exptCond")`) or RT (`r get_coefs("full", "on_smoking:exptCond", coefs_rt)`), nor did we find a two-way interaction effect of smoking session and attentional state on A’ (`r get_coefs("full", "corResp:probe:on_smoking")`) or RT (`r get_coefs("full", "probe:on_smoking", coefs_rt)`).
+Next, we interrogated task-dependent effects of nicotine on performance. Because we initially hypothesized that nicotine would preferentially improve performance on similar room trials, we also examined two-way interactions between smoking session and condition (identical vs. similar) and smoking session and attentional state (art vs. room) on performance. We did not find a two-way interaction effect of smoking session and condition on A’ (`r get_coefs("full", "corResp:on_smoking:exptCond")`) or log-RT (`r get_coefs("full", "on_smoking:exptCond", coefs_rt)`), nor did we find a two-way interaction effect of smoking session and attentional state on A’ (`r get_coefs("full", "corResp:probe:on_smoking")`) or log-RT (`r get_coefs("full", "probe:on_smoking", coefs_rt)`).
 
 ```{r, echo = FALSE}
 coefs_aprime_by_ppm <- aprime_by_ppm_boot %>%
@@ -666,7 +643,7 @@ pcor_diff_aprime_by_ppm <- aprime_by_ppm_boot %>%
   summarize_report(pcor_diff, stat_name = "partial Pearson's r difference")
 ```
 
-_Supplementary Models of Performance._ The above analyses model the task as a 2 (condition: identical or similar) x 2 (attentional state: art or room) x 2 (smoking session: OFF or ON) factorial design. Although this has many advantages, there are also statistical disadvantages (see Methods). To assess whether our results vary based on statistical modeling approach, we also examined performance ON vs. OFF smoking with two other approaches. The first approach used a model with separate predictors for eight factorial levels of interest (i.e., the OFF and ON smoking sessions for identical art, identical room, similar art, and similar room trials). The second approach used four separate models to examine performance ON vs. OFF smoking in each task separately (one model each for identical art, identical room, similar art, similar room). We found that in these supplementary models, there was still no difference in performance between smoking sessions for any of the tasks. Thus, across multiple statistical modeling approaches, we failed to find a performance benefit ON vs OFF nicotine.
+_Supplementary Models of Performance._ The above analyses model the task as a 2 (condition: identical or similar) x 2 (attentional state: art or room) x 2 (smoking session: OFF or ON) factorial design. Although this has many advantages, there are also statistical disadvantages (see **Methods**). To assess whether our results vary based on statistical modeling approach, we also examined performance ON vs. OFF smoking with two other approaches. The first approach used a model with separate predictors for eight factorial levels of interest (i.e., the OFF and ON smoking sessions for identical art, identical room, similar art, and similar room trials). The second approach used four separate models to examine performance ON vs. OFF smoking in each task separately (one model each for identical art, identical room, similar art, similar room). We found that in these supplementary models, there was still no difference in performance between smoking sessions for any of the tasks. Thus, across multiple statistical modeling approaches, we failed to find a performance benefit ON vs OFF nicotine.
 
 _Individual Differences._ The above analyses treat smoking as a binary variable: they simply compared the ON and OFF smoking sessions. However, more precise information is available about individuals’ smoking, because for each session we obtained measures of expired breath carbon monoxide (CO) parts-per-million (ppm). This tells us how recently or how much an individual smoked, allowing us to investigate possible dose-dependent effects of nicotine smoking (e.g., Vollstädt-Klein et al., 2011; Vossel, Warbrick, Mobascher, Winterer, & Fink, 2011). If nicotine smoking enhances attentional performance, then the individuals who show the greatest CO ppm difference (in the ON vs. OFF smoking session) should show the greatest performance enhancements (in the ON vs. OFF smoking session). To investigate this, we ran four independent, between-participants linear regressions predicting A’ difference as a function of CO ppm difference (ON vs. OFF), with one regression for each task: identical art, identical room, similar art, and similar room.
 
@@ -676,9 +653,11 @@ Indeed, we found a modest positive correlation between these measures for the si
 
 Indeed, we found a modest positive correlation between these measures for the similar room task (`r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`; `r pcor_aprime_by_ppm %>% filter(exptCond == "relational", probe == "room") %>% pull(txt_apa_2)`), such that a CO increase of 1 ppm from OFF to ON smoking predicted a 0.0129 unit increase in A’ from OFF to ON smoking (**Figure 6**). CO ppm differences did not predict performance enhancements on any other trial type (identical art: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "art") %>% pull(txt_apa_2)`; identical room: `r coefs_aprime_by_ppm %>% filter(exptCond == "control", probe == "room") %>% pull(txt_apa_2)`; similar art: `r coefs_aprime_by_ppm %>% filter(exptCond == "relational", probe == "art") %>% pull(txt_apa_2)`). Direct comparison showed that the partial Pearson correlation between CO ppm difference and A’ difference ON - OFF smoking for similar room trials was marginally higher than the partial Pearson correlations for the other three trial types (similar room > identical art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ia") %>% pull(txt_apa)`; similar room > identical room: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "ir") %>% pull(txt_apa)`; similar room > similar art: `r pcor_diff_aprime_by_ppm %>% filter(metric_type == "sa") %>% pull(txt_apa)`).
 
-## describe converging results from alternate model fits
+## Not exactly in the main text
 
-REMOVED, now only being updated in the Google Doc
+These are results whose values are referenced in the main text but not spelled out with numbers.
+
+### converging results from alternate model fits
 
 ```{r, echo = FALSE}
 # relational on-off room-art A' interaction? from dummy model
@@ -700,10 +679,11 @@ aprimes_dummy_smoking_probe <- preplots_fixef %>%
   summarize_report(aprime_diff, exptCond)
 ```
 
+The predictions are numerically so similar to the main model.
 
 ### model fit
 
-Should be moved to the statistical methods section but the code will stay here for now just in case
+Referenced in the statistical methods section.
 
 ```{r, echo = FALSE}
 errors <- preplots_raw_bysubj %>%
@@ -739,5 +719,3 @@ errors_supp <- preplots_raw_bysubj %>%
             mae = median(abs(error))) %>%
   pivot_longer(cols = c(rmse, mae), names_to = "error_type", values_to = "error")
 ```
-
-To assess model fit and validate subsequent inferences from the model, we used the model to generate each subject's posterior predicted A' in each task condition, and calculated the errors between predicted A' and raw A' for each subject x condition. We examined median absolute error, as median absolute error does not up-weight extremely large errors, as does root-mean-squared error. Median absolute error was below 0.05 A' units across subjects in seven of eight factorial task conditions.

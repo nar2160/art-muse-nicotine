@@ -3,7 +3,7 @@
 require(tidyverse)
 require(magrittr)
 
-load(here::here("ignore", "data_R", "raw.rda"))
+load(paste(stats_dir, "raw.rda", sep = "/"))
 
 ## resample the bootstrap iterations ----
 
@@ -144,6 +144,6 @@ aprime_by_ppm_boot <- boots_by_subj %>%
 
 ## finish up ----
 
-save(boots_by_subj, boots_by_trial, file = here::here("ignore", "data_R", "boots.rda"))
+save(boots_by_subj, boots_by_trial, file = paste(stats_dir, "boots.rda", sep = "/"))
 
-save(aprime_by_ppm, aprime_by_ppm_boot, file = here::here("ignore", "data_R", "aprime_by_ppm.rda"))
+save(aprime_by_ppm, aprime_by_ppm_boot, file = paste(stats_dir, "aprime_by_ppm.rda", sep = "/"))

@@ -2,6 +2,8 @@
 
 require(tidyverse)
 
+source(here::here("R", "paths.R"))
+
 snodgrass <- function (num, denom) return((num+.5)/(denom+1))
 snodgrass_vec <- function (vec) return((sum(vec) + 0.5) / (length(vec) + 1))
 sdt_pr <- function (hit, fa) return(hit - fa)
@@ -13,7 +15,7 @@ sdt_c <- function (hit, fa) return(-.5 * (qnorm(hit) + qnorm(fa)))
 
 ## read in and preprocess trialwise data from raw ----
 
-demos = read_csv(here::here("ignore", "demographics", "demo_smoke_habits.csv")) %>%
+demos = read_csv(paste(data_dir, "demo_smoke_habits.csv", sep = "/")) %>%
   mutate(cigs_per_day_est = 10 * cigs_per_day_est) %>%
   mutate_if(is.numeric, as.integer) %>%
   mutate(cigs_per_day_est = .1 * cigs_per_day_est,
@@ -21,7 +23,7 @@ demos = read_csv(here::here("ignore", "demographics", "demo_smoke_habits.csv")) 
          ppm_off = if_else(condition == 1, ppm_s2, ppm_s1))
 
 # Read in all .txt files in the raw data folder
-raw = tibble(filename = list.files(here::here("ignore", "materials", "data"), pattern = ".txt", full.names = TRUE)) %>%
+raw = tibble(filename = list.files(data_dir, pattern = ".txt", full.names = TRUE)) %>%
   mutate(data = map(filename, ~.x %>%
                       read_delim(delim = "\t",
                                  skip = 9,
@@ -83,4 +85,4 @@ sdt_metrics <- raw %>%
 
 ## finish it up ----
 
-save(raw, sdt_metrics, file = here::here("ignore", "data_R", "raw.rda"))
+save(raw, sdt_metrics, file = paste(stats_dir, "raw.rda", sep = "/"))

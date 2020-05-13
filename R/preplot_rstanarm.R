@@ -4,8 +4,9 @@ require(tidyverse)
 require(magrittr)
 require(rlang)
 
-load(here::here("ignore", "data_R", "raw.rda"))
-load(here::here("ignore", "data_R", "models_rstanarm.rda"))
+source(here::here("R", "paths.R"))
+load(paste(stats_dir, "raw.rda", sep = "/"))
+load(paste(stats_dir, "models_rstanarm.rda", sep = "/"))
 
 posterior_preplot_params <- function (object) {
   out <- object %>%
@@ -242,7 +243,7 @@ preplots_raw_fixef <- preplots_fixef %>%
                         raw_mean_diff_smoking = mean(diff_smoking)),
             by = c("probe", "exptCond", "metric_type"))
 
-save(preplots_params, preplots_bysubj, preplots_fixef, preplots_raw_bysubj, preplots_raw_fixef, file = here::here("ignore", "data_R", "preplots_rstanarm.rda"))
+save(preplots_params, preplots_bysubj, preplots_fixef, preplots_raw_bysubj, preplots_raw_fixef, file = paste(stats_dir, "preplots_rstanarm.rda", sep = "/"))
 
 ## preplots for RT model ----
 
@@ -287,5 +288,5 @@ preplots_rt_fixef <- models %>%
          rt_pred = exp(log_rt_pred)) %>%
   select(-c(deleteme, exptCond2, probe2, resp_c))
 
-save(preplots_rt_params, preplots_rt_fixef, file = here::here("ignore", "data_R", "preplots_rt_rstanarm.rda"))
+save(preplots_rt_params, preplots_rt_fixef, file = paste(stats_dir, "preplots_rt_rstanarm.rda", sep = "/"))
 

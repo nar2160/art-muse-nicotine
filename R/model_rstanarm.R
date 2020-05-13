@@ -5,7 +5,8 @@ require(magrittr)
 require(rlang)
 options(mc.cores = parallel::detectCores())
 
-load(here::here("ignore", "data_R", "raw.rda"))
+source(here::here("R", "paths.R"))
+load(paste(stats_dir, "raw.rda", sep = "/"))
 
 ## fit giant rstanarm models ----
 
@@ -110,4 +111,4 @@ models %<>%
                          }))
 
 
-save(models, file = here::here("ignore", "data_R", "models_rstanarm.rda"))
+save(models, file = paste(stats_dir, "models_rstanarm.rda", sep = "/"))
