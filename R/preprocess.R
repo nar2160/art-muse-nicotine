@@ -23,7 +23,7 @@ demos = read_csv(paste(data_dir, "demo_smoke_habits.csv", sep = "/")) %>%
          ppm_off = if_else(condition == 1, ppm_s2, ppm_s1))
 
 # Read in all .txt files in the raw data folder
-raw = tibble(filename = list.files(data_dir, pattern = ".txt", full.names = TRUE)) %>%
+raw = tibble(filename = list.files(data_dir_task, pattern = ".txt", full.names = TRUE)) %>%
   mutate(data = map(filename, ~.x %>%
                       read_delim(delim = "\t",
                                  skip = 9,
