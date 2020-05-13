@@ -192,18 +192,6 @@ sdt_metrics %>%
   theme(axis.text.x = element_text(hjust = 1, angle = 45))
 ```
 
-```{r}
-sdt_metrics %>%
-  select(subj_num, on_smoking, exptCond, probe = cue, {{sym_var}}) %>%
-  unite(col = trial_type, on_smoking, exptCond, probe) %>%
-  ungroup() %>%
-  pivot_wider(values_from = {{sym_var}}, names_from = trial_type) %>%
-  select(-subj_num) %>%
-  prcomp() %>%
-  factoextra::fviz_pca_var(col.var = "contrib")
-```
-
-
 ## bootstrap analysis
 
 To relieve memory stress, trialwise bootstrap information will _not_ be retained in the final form of this model object. I tried briefly to figure out how to use `rsample::bootstraps()` to do this, but it doesn't seem to readily support hierarchical 2-level bootstrapping. One could do full-on cluster bootstrapping by `nest()`-ing to get one row per subject, and then _just_ resample subjects, leaving intact their responses on particular trials. However, I want to reproduce 2-level uncertainty on the between and within-subject level. Here goes.
