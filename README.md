@@ -4,9 +4,9 @@ Welcome to the code and raw data repo for our project (link to preprint or publi
 
 ## Setup
 
-You can use the green "Clone/Download" button to download a zipped file of this repository, or fork a copy to your own GitHub account and git clone it to your local machine. Once you get the unzipped folder on your machine, you can use the included .Rproj file to open an RStudio instance for the project.
+You can use the green "Clone or download" button to download a zipped file of this repository, or fork a copy to your own GitHub account and git clone it to your local machine. Once you get the unzipped folder on your machine, you can use the included .Rproj file to open an RStudio instance for the project.
 
-The project was run in R 3.6.1, and we've used the renv package to catalog package dependencies. If you don't currently have renv installed on your machine, you can install the newest version from CRAN. Upon opening the R project, running `renv::restore()` will download all the necessary packages, at the versions we used, without conflicting with existing package versions you might have in your primary R setup. Once you've done that, you're ready to reproduce our analyses.
+The project was run in R 3.6.1, and we've used the [renv](https://rstudio.github.io/renv/articles/renv.html) package to catalog package dependencies. If you don't currently have renv installed on your machine, you can install the newest version from CRAN. Upon opening the R project, running `renv::restore()` will download all the necessary packages, at the versions we used, without conflicting with existing package versions you might have in your primary R setup. Once you've done that, you're ready to reproduce our analyses.
 
 ## Reproducing our analyses
 
@@ -21,7 +21,7 @@ To reproduce the results in the main text, open R/report.Rmd in RStudio and knit
 
 ### Downloading our R files
 
-The intermediate R data are uploaded to Dryad for downloading. You will need to download these separately if you wish to use them, as they're a bit too large to provide via GitHub. Once you download the files, put them into the sub-folder ignore/data_R, and report.Rmd should behave just fine.
+The intermediate R data are uploaded to Dryad (link will go here) for downloading. You will need to download these separately if you wish to use them, as they're a bit too large to provide via GitHub. Once you download the files, put them into the sub-folder [ignore/data_R](#data_r), and report.Rmd should behave just fine.
 
 ### Reproducing our R files from scratch
 
@@ -32,7 +32,7 @@ make ignore/data_R/preplots_rstanarm.rda
 make ignore/data_R/aprime_by_ppm.rda
 ```
 
-**Please be aware that the rstanarm model objects take several hours in total to sample.** Proceed with caution if you do choose this path!
+**Please be aware that the rstanarm model objects take several hours in total to sample, and require your machine to be running the whole time.** Proceed with caution if you do choose this path!
 
 ## What's in the repo
 
